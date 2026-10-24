@@ -128,11 +128,10 @@ pub(crate) struct Parser<'input, 'builder, T: SchemaWithPK, S> {
 
 /// A parsed operation waiting to be applied: the table, its primary key values, and the
 /// operation itself. Nothing is applied to the builder until every statement has parsed.
-type PendingOp<T, S> = (
-    T,
-    Vec<Value<S, Vec<u8>>>,
-    Operation<PatchsetFormat, S, Vec<u8>>,
-);
+type PendingOp<T, S> = (T, KeyValues<S>, Operation<PatchsetFormat, S, Vec<u8>>);
+
+/// Primary key values in primary key order.
+type KeyValues<S> = Vec<Value<S, Vec<u8>>>;
 
 impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<'a> From<&'a str>>
     Parser<'input, 'builder, T, S>
@@ -326,36 +325,9 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
             self.lexer.next()?;
         }
 
-        if self.lexer.peek()?.kind != TokenKind::Where {
-            return Err(ParseError::MissingWhere {
-                statement: "UPDATE",
-            });
-        }
-
-        let n_pk = table.number_of_primary_keys();
-        let mut pk = vec![Value::Null; n_pk];
-        let mut pk_seen = vec![false; n_pk];
-
-        let can_match = self.digest_where(&table, |col_idx, col_name, val| {
-            if let Some(primary_key_index) = table.primary_key_index(usize::from(col_idx)) {
-                pk[primary_key_index] = val.clone();
-                pk_seen[primary_key_index] = true;
-                Ok(())
-            } else {
-                Err(ParseError::WhereNonPKColumn { column: col_name })
-            }
-        })?;
-
-        let found = pk_seen.iter().filter(|&&s| s).count();
-        if found != n_pk {
-            return Err(ParseError::IncompleteWhereKey {
-                expected: n_pk,
-                found,
-            });
-        }
-        if !can_match {
+        let Some(pk) = self.digest_key_where(&table, "UPDATE")? else {
             return Ok(());
-        }
+        };
 
         // A session records a key change as a DELETE plus a full-row INSERT, which SQL text cannot supply.
         if let Some(&(_, _, column)) = key_sets.iter().find(|&&(col_idx, primary_key_index, _)| {
@@ -383,19 +355,42 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
 
         let (table, _) = self.expect_table()?;
 
+        let Some(pks) = self.digest_key_where(&table, "DELETE")? else {
+            return Ok(());
+        };
+
+        self.pending.push((
+            table,
+            pks,
+            Operation::Delete {
+                data: (),
+                indirect: false,
+            },
+        ));
+
+        Ok(())
+    }
+
+    /// Parse the WHERE clause of `statement`, which must bind every primary key
+    /// column and nothing else, into the key values in primary key order.
+    ///
+    /// Returns `None` when no row can satisfy the clause.
+    fn digest_key_where(
+        &mut self,
+        table: &T,
+        statement: &'static str,
+    ) -> Result<Option<KeyValues<S>>, ParseError<'input>> {
         if self.lexer.peek()?.kind != TokenKind::Where {
-            return Err(ParseError::MissingWhere {
-                statement: "DELETE",
-            });
+            return Err(ParseError::MissingWhere { statement });
         }
 
         let n_pk = table.number_of_primary_keys();
-        let mut pks = vec![Value::Null; n_pk];
+        let mut pk = vec![Value::Null; n_pk];
         let mut pk_seen = vec![false; n_pk];
 
-        let can_match = self.digest_where(&table, |col_idx, col_name, val| {
+        let can_match = self.digest_where(table, |col_idx, col_name, val| {
             if let Some(primary_key_index) = table.primary_key_index(usize::from(col_idx)) {
-                pks[primary_key_index] = val.clone();
+                pk[primary_key_index] = val;
                 pk_seen[primary_key_index] = true;
                 Ok(())
             } else {
@@ -410,20 +405,7 @@ impl<'input, 'builder, T: NamedColumns, S: Clone + Hash + Eq + AsRef<str> + for<
                 found,
             });
         }
-        if !can_match {
-            return Ok(());
-        }
-
-        self.pending.push((
-            table,
-            pks,
-            Operation::Delete {
-                data: (),
-                indirect: false,
-            },
-        ));
-
-        Ok(())
+        Ok(can_match.then_some(pk))
     }
 
     /// Parse a WHERE clause, calling `digestor` for each `col = val` predicate

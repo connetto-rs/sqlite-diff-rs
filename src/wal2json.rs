@@ -108,8 +108,8 @@ impl Wal2JsonColumn<'_> {
 }
 
 use crate::builders::{
-    ChangeDelete, ChangesetFormat, DiffOps, DiffSetBuilder, Insert, PatchDelete, PatchsetFormat,
-    Update,
+    ChangeDelete, ChangesetFormat, DeleteArg, DiffOps, DiffSetBuilder, Format, Insert, PatchDelete,
+    PatchsetFormat, Update,
 };
 use crate::encoding::Value;
 use crate::schema::NamedColumns;
@@ -136,44 +136,14 @@ where
         Sch: WireSchema<Table = T>,
         A: WireAdapter<Wal2Json, S, B>,
     {
-        match self {
-            MessageV2::Insert(row) => {
-                let table = resolve_table(schema, row.schema.as_deref(), row.table.as_str())?;
-                let columns = row
-                    .columns
-                    .as_deref()
-                    .ok_or(ConversionError::MissingColumns)?;
-                let insert = build_insert_from_v2(columns, table, adapter)?;
-                Ok(DiffOps::insert(builder, insert))
-            }
-            MessageV2::Update(row) => {
-                let table = resolve_table(schema, row.schema.as_deref(), row.table.as_str())?;
-                let columns = row
-                    .columns
-                    .as_deref()
-                    .ok_or(ConversionError::MissingColumns)?;
-                let update = build_changeset_update_from_v2(
-                    columns,
-                    row.identity.as_deref(),
-                    table,
-                    adapter,
-                )?;
-                Ok(DiffOps::update(builder, update))
-            }
-            MessageV2::Delete(row) => {
-                let table = resolve_table(schema, row.schema.as_deref(), row.table.as_str())?;
-                let identity = row
-                    .identity
-                    .as_deref()
-                    .ok_or(ConversionError::MissingColumns)?;
-                let delete = build_changeset_delete_from_columns(identity, table, adapter)?;
-                Ok(DiffOps::delete(builder, delete))
-            }
-            MessageV2::Begin(_)
-            | MessageV2::Commit(_)
-            | MessageV2::Truncate(_)
-            | MessageV2::Message(_) => Ok(builder),
-        }
+        digest_v2(
+            self,
+            builder,
+            schema,
+            adapter,
+            build_changeset_update_from_v2,
+            build_changeset_delete_from_columns,
+        )
     }
 }
 
@@ -196,39 +166,16 @@ where
         Sch: WireSchema<Table = T>,
         A: WireAdapter<Wal2Json, S, B>,
     {
-        match self {
-            MessageV2::Insert(row) => {
-                let table = resolve_table(schema, row.schema.as_deref(), row.table.as_str())?;
-                let columns = row
-                    .columns
-                    .as_deref()
-                    .ok_or(ConversionError::MissingColumns)?;
-                let insert = build_insert_from_v2(columns, table, adapter)?;
-                Ok(DiffOps::insert(builder, insert))
-            }
-            MessageV2::Update(row) => {
-                let table = resolve_table(schema, row.schema.as_deref(), row.table.as_str())?;
-                let columns = row
-                    .columns
-                    .as_deref()
-                    .ok_or(ConversionError::MissingColumns)?;
-                let update = build_patchset_update_from_v2(columns, table, adapter)?;
-                Ok(DiffOps::update(builder, update))
-            }
-            MessageV2::Delete(row) => {
-                let table = resolve_table(schema, row.schema.as_deref(), row.table.as_str())?;
-                let identity = row
-                    .identity
-                    .as_deref()
-                    .ok_or(ConversionError::MissingColumns)?;
-                let delete = build_patch_delete_from_columns(identity, table, adapter)?;
-                Ok(DiffOps::delete(builder, delete))
-            }
-            MessageV2::Begin(_)
-            | MessageV2::Commit(_)
-            | MessageV2::Truncate(_)
-            | MessageV2::Message(_) => Ok(builder),
-        }
+        digest_v2(
+            self,
+            builder,
+            schema,
+            adapter,
+            |columns, _identity, table, adapter| {
+                build_patchset_update_from_v2(columns, table, adapter)
+            },
+            build_patch_delete_from_columns,
+        )
     }
 }
 
@@ -251,40 +198,14 @@ where
         Sch: WireSchema<Table = T>,
         A: WireAdapter<Wal2Json, S, B>,
     {
-        match self {
-            ChangeV1::Insert {
-                schema: source_schema,
-                table,
-                columns,
-                ..
-            } => {
-                let table = resolve_table(schema, source_schema.as_deref(), table.as_str())?;
-                let insert = build_insert_from_v1(columns, table, adapter)?;
-                Ok(DiffOps::insert(builder, insert))
-            }
-            ChangeV1::Update {
-                schema: source_schema,
-                table,
-                columns,
-                oldkeys,
-                ..
-            } => {
-                let table = resolve_table(schema, source_schema.as_deref(), table.as_str())?;
-                let update = build_changeset_update_from_v1(columns, oldkeys, table, adapter)?;
-                Ok(DiffOps::update(builder, update))
-            }
-            ChangeV1::Delete {
-                schema: source_schema,
-                table,
-                oldkeys,
-                ..
-            } => {
-                let table = resolve_table(schema, source_schema.as_deref(), table.as_str())?;
-                let delete = build_changeset_delete_from_v1(oldkeys, table, adapter)?;
-                Ok(DiffOps::delete(builder, delete))
-            }
-            ChangeV1::Message { .. } => Ok(builder),
-        }
+        digest_v1(
+            self,
+            builder,
+            schema,
+            adapter,
+            build_changeset_update_from_v1,
+            build_changeset_delete_from_v1,
+        )
     }
 }
 
@@ -307,39 +228,130 @@ where
         Sch: WireSchema<Table = T>,
         A: WireAdapter<Wal2Json, S, B>,
     {
-        match self {
-            ChangeV1::Insert {
-                schema: source_schema,
-                table,
-                columns,
-                ..
-            } => {
-                let table = resolve_table(schema, source_schema.as_deref(), table.as_str())?;
-                let insert = build_insert_from_v1(columns, table, adapter)?;
-                Ok(DiffOps::insert(builder, insert))
-            }
-            ChangeV1::Update {
-                schema: source_schema,
-                table,
-                columns,
-                ..
-            } => {
-                let table = resolve_table(schema, source_schema.as_deref(), table.as_str())?;
-                let update = build_patchset_update_from_v1(columns, table, adapter)?;
-                Ok(DiffOps::update(builder, update))
-            }
-            ChangeV1::Delete {
-                schema: source_schema,
-                table,
-                oldkeys,
-                ..
-            } => {
-                let table = resolve_table(schema, source_schema.as_deref(), table.as_str())?;
-                let delete = build_patch_delete_from_v1(oldkeys, table, adapter)?;
-                Ok(DiffOps::delete(builder, delete))
-            }
-            ChangeV1::Message { .. } => Ok(builder),
+        digest_v1(
+            self,
+            builder,
+            schema,
+            adapter,
+            |columns, _oldkeys, table, adapter| {
+                build_patchset_update_from_v1(columns, table, adapter)
+            },
+            build_patch_delete_from_v1,
+        )
+    }
+}
+
+/// Digests one wal2json v2 message into `builder`, building its UPDATE and DELETE rows
+/// with the format's `update` and `delete`.
+fn digest_v2<F, T, S, B, Sch, A>(
+    message: &MessageV2,
+    builder: DiffSetBuilder<F, T, S, B>,
+    schema: &Sch,
+    adapter: &A,
+    update: impl FnOnce(
+        &[Column],
+        Option<&[Column]>,
+        &T,
+        &A,
+    ) -> Result<Update<T, F, S, B>, ConversionError>,
+    delete: impl FnOnce(&[Column], &T, &A) -> Result<DeleteArg<F, T, S, B>, ConversionError>,
+) -> Result<DiffSetBuilder<F, T, S, B>, ConversionError>
+where
+    F: Format<S, B>,
+    T: NamedColumns + WireColumnTypes,
+    S: Clone + Debug + Hash + Eq + AsRef<str> + Default,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]> + Default,
+    Sch: WireSchema<Table = T>,
+    A: WireAdapter<Wal2Json, S, B>,
+    DiffSetBuilder<F, T, S, B>: DiffOps<T, S, B, Format = F>,
+{
+    match message {
+        MessageV2::Insert(row) => {
+            let table = resolve_table(schema, row.schema.as_deref(), row.table.as_str())?;
+            let columns = row
+                .columns
+                .as_deref()
+                .ok_or(ConversionError::MissingColumns)?;
+            let insert = build_insert_from_v2(columns, table, adapter)?;
+            Ok(DiffOps::insert(builder, insert))
         }
+        MessageV2::Update(row) => {
+            let table = resolve_table(schema, row.schema.as_deref(), row.table.as_str())?;
+            let columns = row
+                .columns
+                .as_deref()
+                .ok_or(ConversionError::MissingColumns)?;
+            let update = update(columns, row.identity.as_deref(), table, adapter)?;
+            Ok(DiffOps::update(builder, update))
+        }
+        MessageV2::Delete(row) => {
+            let table = resolve_table(schema, row.schema.as_deref(), row.table.as_str())?;
+            let identity = row
+                .identity
+                .as_deref()
+                .ok_or(ConversionError::MissingColumns)?;
+            let delete = delete(identity, table, adapter)?;
+            Ok(DiffOps::delete(builder, delete))
+        }
+        MessageV2::Begin(_)
+        | MessageV2::Commit(_)
+        | MessageV2::Truncate(_)
+        | MessageV2::Message(_) => Ok(builder),
+    }
+}
+
+/// Digests one wal2json v1 change into `builder`, building its UPDATE and DELETE rows
+/// with the format's `update` and `delete`.
+fn digest_v1<F, T, S, B, Sch, A>(
+    change: &ChangeV1,
+    builder: DiffSetBuilder<F, T, S, B>,
+    schema: &Sch,
+    adapter: &A,
+    update: impl FnOnce(&ColumnArrays, &OldKeys, &T, &A) -> Result<Update<T, F, S, B>, ConversionError>,
+    delete: impl FnOnce(&OldKeys, &T, &A) -> Result<DeleteArg<F, T, S, B>, ConversionError>,
+) -> Result<DiffSetBuilder<F, T, S, B>, ConversionError>
+where
+    F: Format<S, B>,
+    T: NamedColumns + WireColumnTypes,
+    S: Clone + Debug + Hash + Eq + AsRef<str> + Default,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]> + Default,
+    Sch: WireSchema<Table = T>,
+    A: WireAdapter<Wal2Json, S, B>,
+    DiffSetBuilder<F, T, S, B>: DiffOps<T, S, B, Format = F>,
+{
+    match change {
+        ChangeV1::Insert {
+            schema: source_schema,
+            table,
+            columns,
+            ..
+        } => {
+            let table = resolve_table(schema, source_schema.as_deref(), table.as_str())?;
+            let insert = build_insert_from_v1(columns, table, adapter)?;
+            Ok(DiffOps::insert(builder, insert))
+        }
+        ChangeV1::Update {
+            schema: source_schema,
+            table,
+            columns,
+            oldkeys,
+            ..
+        } => {
+            let table = resolve_table(schema, source_schema.as_deref(), table.as_str())?;
+            let update = update(columns, oldkeys, table, adapter)?;
+            Ok(DiffOps::update(builder, update))
+        }
+        ChangeV1::Delete {
+            schema: source_schema,
+            table,
+            oldkeys,
+            ..
+        } => {
+            let table = resolve_table(schema, source_schema.as_deref(), table.as_str())?;
+            let delete = delete(oldkeys, table, adapter)?;
+            Ok(DiffOps::delete(builder, delete))
+        }
+        ChangeV1::Message { .. } => Ok(builder),
     }
 }
 

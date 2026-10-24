@@ -11,7 +11,8 @@ pub use pg_walstream::{ChangeEvent, ColumnValue, EventType, Lsn, ReplicaIdentity
 
 use crate::ChangesetFormat;
 use crate::builders::{
-    ChangeDelete, DiffOps, DiffSetBuilder, Insert, PatchDelete, PatchsetFormat, Update,
+    ChangeDelete, DeleteArg, DiffOps, DiffSetBuilder, Format, Insert, PatchDelete, PatchsetFormat,
+    Update,
 };
 use crate::schema::NamedColumns;
 use crate::wire::{
@@ -118,41 +119,14 @@ where
         Sch: WireSchema<Table = T>,
         A: WireAdapter<PgWalstream, S, B>,
     {
-        match self {
-            EventType::Insert {
-                schema: source_schema,
-                table: name,
-                data,
-                ..
-            } => {
-                let table = resolve_table(schema, Some(source_schema.as_ref()), name.as_ref())?;
-                let insert = build_insert_from_pg(data, table, adapter)?;
-                Ok(DiffOps::insert(builder, insert))
-            }
-            EventType::Update {
-                schema: source_schema,
-                table: name,
-                old_data,
-                new_data,
-                ..
-            } => {
-                let table = resolve_table(schema, Some(source_schema.as_ref()), name.as_ref())?;
-                let update =
-                    build_changeset_update_from_pg(old_data.as_ref(), new_data, table, adapter)?;
-                Ok(DiffOps::update(builder, update))
-            }
-            EventType::Delete {
-                schema: source_schema,
-                table: name,
-                old_data,
-                ..
-            } => {
-                let table = resolve_table(schema, Some(source_schema.as_ref()), name.as_ref())?;
-                let delete = build_changeset_delete_from_pg(old_data, table, adapter)?;
-                Ok(DiffOps::delete(builder, delete))
-            }
-            _ => Ok(builder),
-        }
+        digest(
+            self,
+            builder,
+            schema,
+            adapter,
+            build_changeset_update_from_pg,
+            build_changeset_delete_from_pg,
+        )
     }
 }
 
@@ -175,39 +149,76 @@ where
         Sch: WireSchema<Table = T>,
         A: WireAdapter<PgWalstream, S, B>,
     {
-        match self {
-            EventType::Insert {
-                schema: source_schema,
-                table: name,
-                data,
-                ..
-            } => {
-                let table = resolve_table(schema, Some(source_schema.as_ref()), name.as_ref())?;
-                let insert = build_insert_from_pg(data, table, adapter)?;
-                Ok(DiffOps::insert(builder, insert))
-            }
-            EventType::Update {
-                schema: source_schema,
-                table: name,
-                new_data,
-                ..
-            } => {
-                let table = resolve_table(schema, Some(source_schema.as_ref()), name.as_ref())?;
-                let update = build_patchset_update_from_pg(new_data, table, adapter)?;
-                Ok(DiffOps::update(builder, update))
-            }
-            EventType::Delete {
-                schema: source_schema,
-                table: name,
-                old_data,
-                ..
-            } => {
-                let table = resolve_table(schema, Some(source_schema.as_ref()), name.as_ref())?;
-                let delete = build_patch_delete_from_pg(old_data, table, adapter)?;
-                Ok(DiffOps::delete(builder, delete))
-            }
-            _ => Ok(builder),
+        digest(
+            self,
+            builder,
+            schema,
+            adapter,
+            |_old, new_data, table, adapter| {
+                build_patchset_update_from_pg(new_data, table, adapter)
+            },
+            build_patch_delete_from_pg,
+        )
+    }
+}
+
+/// Digests one `pg_walstream` event into `builder`, building its UPDATE and DELETE rows
+/// with the format's `update` and `delete`.
+fn digest<F, T, S, B, Sch, A>(
+    event: &EventType,
+    builder: DiffSetBuilder<F, T, S, B>,
+    schema: &Sch,
+    adapter: &A,
+    update: impl FnOnce(
+        Option<&RowData>,
+        &RowData,
+        &T,
+        &A,
+    ) -> Result<Update<T, F, S, B>, ConversionError>,
+    delete: impl FnOnce(&RowData, &T, &A) -> Result<DeleteArg<F, T, S, B>, ConversionError>,
+) -> Result<DiffSetBuilder<F, T, S, B>, ConversionError>
+where
+    F: Format<S, B>,
+    T: NamedColumns + WireColumnTypes,
+    S: Clone + Debug + Hash + Eq + AsRef<str> + Default,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]> + Default,
+    Sch: WireSchema<Table = T>,
+    A: WireAdapter<PgWalstream, S, B>,
+    DiffSetBuilder<F, T, S, B>: DiffOps<T, S, B, Format = F>,
+{
+    match event {
+        EventType::Insert {
+            schema: source_schema,
+            table: name,
+            data,
+            ..
+        } => {
+            let table = resolve_table(schema, Some(source_schema.as_ref()), name.as_ref())?;
+            let insert = build_insert_from_pg(data, table, adapter)?;
+            Ok(DiffOps::insert(builder, insert))
         }
+        EventType::Update {
+            schema: source_schema,
+            table: name,
+            old_data,
+            new_data,
+            ..
+        } => {
+            let table = resolve_table(schema, Some(source_schema.as_ref()), name.as_ref())?;
+            let update = update(old_data.as_ref(), new_data, table, adapter)?;
+            Ok(DiffOps::update(builder, update))
+        }
+        EventType::Delete {
+            schema: source_schema,
+            table: name,
+            old_data,
+            ..
+        } => {
+            let table = resolve_table(schema, Some(source_schema.as_ref()), name.as_ref())?;
+            let delete = delete(old_data, table, adapter)?;
+            Ok(DiffOps::delete(builder, delete))
+        }
+        _ => Ok(builder),
     }
 }
 

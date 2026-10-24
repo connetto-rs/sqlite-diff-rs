@@ -15,7 +15,10 @@
 //! [`DiffSet::iter`]: super::DiffSet::iter
 
 use alloc::vec::Vec;
+use core::fmt::Debug;
 
+use super::format::{ChangesetFormat, PatchsetFormat};
+use super::operation::Operation;
 use crate::encoding::Value;
 use crate::schema::SchemaWithPK;
 
@@ -111,6 +114,31 @@ impl<'a, T, S, B> ChangesetOp<'a, T, S, B> {
             Self::Insert { indirect, .. }
             | Self::Update { indirect, .. }
             | Self::Delete { indirect, .. } => *indirect,
+        }
+    }
+}
+
+impl<'a, T, S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>>
+    ChangesetOp<'a, T, S, B>
+{
+    /// The view of `op`, an operation stored for `table`.
+    pub(crate) fn of_stored(table: &'a T, op: &'a Operation<ChangesetFormat, S, B>) -> Self {
+        match op {
+            Operation::Insert { values, indirect } => Self::Insert {
+                table,
+                values: values.as_slice(),
+                indirect: *indirect,
+            },
+            Operation::Update { values, indirect } => Self::Update {
+                table,
+                values: values.as_slice(),
+                indirect: *indirect,
+            },
+            Operation::Delete { data, indirect } => Self::Delete {
+                table,
+                old_values: data.as_slice(),
+                indirect: *indirect,
+            },
         }
     }
 }
@@ -226,6 +254,34 @@ impl<'a, T, S, B> PatchsetOp<'a, T, S, B> {
         match self {
             Self::Update { entries, .. } => Some(entries.iter().map(|((), v)| v).collect()),
             _ => None,
+        }
+    }
+}
+
+impl<'a, T, S, B> PatchsetOp<'a, T, S, B> {
+    /// The view of `op`, an operation stored for `table` under the primary key `pk`.
+    pub(crate) fn of_stored(
+        table: &'a T,
+        pk: &'a [Value<S, B>],
+        op: &'a Operation<PatchsetFormat, S, B>,
+    ) -> Self {
+        match op {
+            Operation::Insert { values, indirect } => Self::Insert {
+                table,
+                values: values.as_slice(),
+                indirect: *indirect,
+            },
+            Operation::Update { values, indirect } => Self::Update {
+                table,
+                pk,
+                entries: values.as_slice(),
+                indirect: *indirect,
+            },
+            Operation::Delete { indirect, .. } => Self::Delete {
+                table,
+                pk,
+                indirect: *indirect,
+            },
         }
     }
 }

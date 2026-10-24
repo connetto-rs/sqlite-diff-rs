@@ -1051,23 +1051,6 @@ fn mx_int64_overflow_wrong_payload() {
     }
 }
 
-/// NaN cannot be represented in serde_json::Value::Number, so the
-/// NaN→Null path in RealDecoder is unreachable for maxwell.
-/// The NaN normalization is exercised via pg_walstream text-mode "NaN".
-#[test]
-fn mx_real_decoder_nan_unreachable() {
-    let dec = sqlite_diff_rs::RealDecoder;
-    // Verify that -0.0 keeps its sign instead.
-    let val = as_mx_dec!(dec)
-        .decode(MaxwellColumn {
-            column_name: "c",
-            wire_type: WireType::Real,
-            value: &serde_json::Value::Number(serde_json::Number::from_f64(-0.0).unwrap()),
-        })
-        .unwrap();
-    assert_eq!(val, Value::Real(-0.0), "-0.0 keeps its sign");
-}
-
 #[test]
 fn mx_real_decoder_negative_zero_keeps_sign() {
     let dec = sqlite_diff_rs::RealDecoder;

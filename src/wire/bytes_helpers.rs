@@ -7,6 +7,9 @@
 
 use alloc::vec::Vec;
 
+#[cfg(any(feature = "wal2json", feature = "pg-walstream"))]
+use super::uuid_helpers::hex_nibble;
+
 /// Decode a PG `\xHEX` escape (produced by `\x` prefix + even-length
 /// lowercase or uppercase hex) into raw bytes.
 ///
@@ -59,17 +62,6 @@ fn decode_hex(hex: &[u8]) -> Result<Vec<u8>, usize> {
         out.push((hi << 4) | lo);
     }
     Ok(out)
-}
-
-#[cfg(any(feature = "wal2json", feature = "pg-walstream"))]
-#[inline]
-fn hex_nibble(b: u8) -> Option<u8> {
-    match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        b'A'..=b'F' => Some(b - b'A' + 10),
-        _ => None,
-    }
 }
 
 /// Decode a standard base64 (RFC 4648) string into raw bytes.

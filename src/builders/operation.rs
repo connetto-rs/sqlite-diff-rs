@@ -61,6 +61,33 @@ impl<F: Format<S, B>, S, B> Operation<F, S, B> {
     }
 }
 
+/// The `(old, new)` pairs of an UPDATE in format `F`.
+type UpdatePairs<F, S, B> = Vec<(<F as Format<S, B>>::Old, MaybeValue<S, B>)>;
+
+/// The row of an INSERT with every defined new value of a following UPDATE applied.
+fn apply_update<F: Format<S, B>, S, B>(
+    mut values: Vec<Value<S, B>>,
+    updates: UpdatePairs<F, S, B>,
+) -> Vec<Value<S, B>> {
+    for (idx, (_old, new)) in updates.into_iter().enumerate() {
+        if let Some(new_val) = new {
+            values[idx] = new_val;
+        }
+    }
+    values
+}
+
+/// Two consecutive UPDATEs as one, keeping the first's old values and the second's new ones.
+fn merge_updates<F: Format<S, B>, S, B>(
+    lhs: UpdatePairs<F, S, B>,
+    rhs: UpdatePairs<F, S, B>,
+) -> UpdatePairs<F, S, B> {
+    lhs.into_iter()
+        .zip(rhs)
+        .map(|((old, _mid), (_mid2, new))| (old, new))
+        .collect()
+}
+
 impl<F: Format<S, B>, S: PartialEq + AsRef<str>, B: PartialEq + AsRef<[u8]>> PartialEq
     for Operation<F, S, B>
 where
@@ -166,18 +193,14 @@ impl<S: Clone + Debug + PartialEq + AsRef<str>, B: Clone + Debug + PartialEq + A
 
             // INSERT + UPDATE: apply update to insert values
             (
-                Self::Insert { mut values, .. },
+                Self::Insert { values, .. },
                 Self::Update {
                     values: updates, ..
                 },
-            ) => {
-                for (idx, (_old, new)) in updates.into_iter().enumerate() {
-                    if let Some(new_val) = new {
-                        values[idx] = new_val;
-                    }
-                }
-                Some(Self::Insert { values, indirect })
-            }
+            ) => Some(Self::Insert {
+                values: apply_update::<ChangesetFormat, S, B>(values, updates),
+                indirect,
+            }),
 
             // INSERT + DELETE: cancel out
             (Self::Insert { .. }, Self::Delete { .. }) => None,
@@ -190,13 +213,8 @@ impl<S: Clone + Debug + PartialEq + AsRef<str>, B: Clone + Debug + PartialEq + A
 
             // UPDATE + UPDATE: keep original old, use final new
             (Self::Update { values: lhs, .. }, Self::Update { values: rhs, .. }) => {
-                let merged = lhs
-                    .into_iter()
-                    .zip(rhs)
-                    .map(|((old, _mid), (_mid2, new))| (old, new))
-                    .collect();
                 Some(Self::Update {
-                    values: merged,
+                    values: merge_updates::<ChangesetFormat, S, B>(lhs, rhs),
                     indirect,
                 })
             }
@@ -262,18 +280,14 @@ impl<S: Clone + PartialEq + AsRef<str>, B: Clone + PartialEq + AsRef<[u8]>> core
 
             // INSERT + UPDATE: apply update to insert values
             (
-                Self::Insert { mut values, .. },
+                Self::Insert { values, .. },
                 Self::Update {
                     values: updates, ..
                 },
-            ) => {
-                for (idx, ((), new)) in updates.into_iter().enumerate() {
-                    if let Some(new_val) = new {
-                        values[idx] = new_val;
-                    }
-                }
-                Some(Self::Insert { values, indirect })
-            }
+            ) => Some(Self::Insert {
+                values: apply_update::<PatchsetFormat, S, B>(values, updates),
+                indirect,
+            }),
 
             // INSERT + DELETE: cancel out
             (Self::Insert { .. }, Self::Delete { data: (), .. }) => None,
@@ -286,13 +300,8 @@ impl<S: Clone + PartialEq + AsRef<str>, B: Clone + PartialEq + AsRef<[u8]>> core
 
             // UPDATE + UPDATE: keep original old (unit), use final new
             (Self::Update { values: lhs, .. }, Self::Update { values: rhs, .. }) => {
-                let merged = lhs
-                    .into_iter()
-                    .zip(rhs)
-                    .map(|((old, _mid), (_mid2, new))| (old, new))
-                    .collect();
                 Some(Self::Update {
-                    values: merged,
+                    values: merge_updates::<PatchsetFormat, S, B>(lhs, rhs),
                     indirect,
                 })
             }

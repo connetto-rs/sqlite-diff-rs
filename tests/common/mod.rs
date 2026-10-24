@@ -1,7 +1,9 @@
-//! Shared schema fixtures for CDC digestion integration tests.
+//! Shared schema fixtures and operation assertions for the CDC digestion
+//! integration tests.
 //!
 //! Provides a three-column `users` table (`id` INT PK, `name` TEXT, `active`
-//! BOOL) with all required trait impls, reused by `digestion_pg_walstream`,
+//! BOOL) with all required trait impls, plus the assertions every digestion
+//! test shares for the canonical row images, reused by `digestion_pg_walstream`,
 //! `digestion_wal2json`, and `digestion_maxwell`.
 
 #![allow(dead_code, unused_imports)]
@@ -11,8 +13,8 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use sqlite_diff_rs::{
-    DynTable, IndexableValues, NamedColumns, SchemaWithPK, SimpleTable, Value, WireColumnTypes,
-    WireSchema, WireType,
+    ChangesetUpdatePair, DynTable, IndexableValues, NamedColumns, PatchsetUpdateEntry,
+    SchemaWithPK, SimpleTable, Value, WireColumnTypes, WireSchema, WireType,
 };
 
 /// A single-table schema holding the `users` test table.
@@ -121,4 +123,50 @@ pub fn source_scoped_test_schema(source_schema: &'static str) -> SourceScopedTes
         )),
         source_schema,
     }
+}
+
+/// The encoded image of the canonical `users` row (`id` 1, `name`, `active` 1).
+pub fn assert_users_row(values: &[Value<String, Vec<u8>>], name: &str) {
+    assert_eq!(values.len(), 3, "three columns");
+    assert_eq!(values[0], Value::Integer(1), "id");
+    assert_eq!(values[1], Value::Text(name.to_string()), "name");
+    assert_eq!(values[2], Value::Integer(1), "active=true encodes as 1");
+}
+
+/// The `(old, new)` image pairs of a canonical `users` `UPDATE`.
+pub fn assert_users_update(values: &[ChangesetUpdatePair<String, Vec<u8>>]) {
+    assert_eq!(values.len(), 3, "three columns");
+    assert_eq!(values[0].0, Some(Value::Integer(1)), "old id");
+    assert_eq!(
+        values[1].0,
+        Some(Value::Text("Alice".to_string())),
+        "old name"
+    );
+    assert_eq!(
+        values[1].1,
+        Some(Value::Text("Alicia".to_string())),
+        "new name"
+    );
+}
+
+/// The primary key and new images of a canonical `users` patchset `UPDATE`.
+pub fn assert_users_patchset_update(
+    pk: &[Value<String, Vec<u8>>],
+    entries: &[PatchsetUpdateEntry<String, Vec<u8>>],
+) {
+    assert_eq!(pk, &[Value::Integer(1)], "primary key");
+    assert_eq!(entries.len(), 3, "three column entries");
+    assert_eq!(
+        entries[1].1,
+        Some(Value::Text("Alicia".to_string())),
+        "new name"
+    );
+    assert_eq!(entries[2].1, Some(Value::Integer(1)), "new active");
+}
+
+/// The re-parsed image of a canonical `users` changeset `UPDATE`.
+pub fn assert_parsed_users_update(values: &[ChangesetUpdatePair<String, Vec<u8>>]) {
+    assert_eq!(values.len(), 3, "column count in encoded bytes");
+    assert_eq!(values[1].0, Some(Value::Text("Alice".to_string())));
+    assert_eq!(values[1].1, Some(Value::Text("Alicia".to_string())));
 }

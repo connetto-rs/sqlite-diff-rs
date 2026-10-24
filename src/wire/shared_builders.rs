@@ -74,6 +74,28 @@ where
     Ok((col_idx, value))
 }
 
+/// Decode every column of `items` and set it on `row` with `set`.
+fn set_items<Src, T, S, B, A, I, C, R, E>(
+    items: I,
+    table: &T,
+    adapter: &A,
+    row: R,
+    set: impl Fn(R, usize, Value<S, B>) -> Result<R, E>,
+) -> Result<R, ConversionError>
+where
+    Src: WireSource,
+    T: NamedColumns + WireColumnTypes,
+    A: WireAdapter<Src, S, B>,
+    I: IntoIterator<Item = C>,
+    C: WireColumnItem<Src>,
+{
+    items.into_iter().try_fold(row, |row, item| {
+        let (col_idx, value) = decode_item(&item, table, adapter)?;
+        set(row, col_idx, value)
+            .map_err(|_| ConversionError::ColumnNotFound(String::from(item.name())))
+    })
+}
+
 /// Build an INSERT from every column in the event.
 pub(crate) fn build_insert<Src, T, S, B, A, I, C>(
     items: I,
@@ -89,14 +111,13 @@ where
     I: IntoIterator<Item = C>,
     C: WireColumnItem<Src>,
 {
-    let mut insert = Insert::from(table.clone());
-    for item in items {
-        let (col_idx, value) = decode_item(&item, table, adapter)?;
-        insert = insert
-            .set(col_idx, value)
-            .map_err(|_| ConversionError::ColumnNotFound(String::from(item.name())))?;
-    }
-    Ok(insert)
+    set_items(
+        items,
+        table,
+        adapter,
+        Insert::from(table.clone()),
+        Insert::set,
+    )
 }
 
 /// Build a patchset UPDATE from the event's new-image columns.
@@ -114,14 +135,10 @@ where
     I: IntoIterator<Item = C>,
     C: WireColumnItem<Src>,
 {
-    let mut update: Update<T, PatchsetFormat, S, B> = Update::from(table.clone());
-    for item in items {
-        let (col_idx, value) = decode_item(&item, table, adapter)?;
-        update = update
-            .set(col_idx, value)
-            .map_err(|_| ConversionError::ColumnNotFound(String::from(item.name())))?;
-    }
-    Ok(update)
+    let update: Update<T, PatchsetFormat, S, B> = Update::from(table.clone());
+    set_items(items, table, adapter, update, |row, col_idx, value| {
+        row.set(col_idx, value)
+    })
 }
 
 /// Build a changeset DELETE from the event's old-image (identity) columns.
@@ -139,14 +156,13 @@ where
     I: IntoIterator<Item = C>,
     C: WireColumnItem<Src>,
 {
-    let mut delete = ChangeDelete::from(table.clone());
-    for item in items {
-        let (col_idx, value) = decode_item(&item, table, adapter)?;
-        delete = delete
-            .set(col_idx, value)
-            .map_err(|_| ConversionError::ColumnNotFound(String::from(item.name())))?;
-    }
-    Ok(delete)
+    set_items(
+        items,
+        table,
+        adapter,
+        ChangeDelete::from(table.clone()),
+        ChangeDelete::set,
+    )
 }
 
 /// Build a patchset DELETE, extracting only the primary-key columns.

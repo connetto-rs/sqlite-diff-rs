@@ -18,7 +18,10 @@ use sqlite_diff_rs::{
 };
 
 mod common;
-use common::{TestUsersTable, source_scoped_test_schema, test_schema};
+use common::{
+    TestUsersTable, assert_parsed_users_update, assert_users_patchset_update, assert_users_row,
+    assert_users_update, source_scoped_test_schema, test_schema,
+};
 
 fn default_adapter() -> TypeMap<PgWalstream, String, Vec<u8>> {
     TypeMap::defaults()
@@ -71,10 +74,7 @@ fn pg_changeset_insert() {
     match &ops[0] {
         ChangesetOp::Insert { table, values, .. } => {
             assert_eq!(table.name(), "users");
-            assert_eq!(values.len(), 3, "three columns");
-            assert_eq!(values[0], Value::Integer(1), "id");
-            assert_eq!(values[1], Value::Text("Alice".to_string()), "name");
-            assert_eq!(values[2], Value::Integer(1), "active=true encodes as 1");
+            assert_users_row(values, "Alice");
         }
         other => panic!("expected Insert, got {other:?}"),
     }
@@ -87,10 +87,7 @@ fn pg_changeset_insert() {
     assert_eq!(parsed_ops.len(), 1);
     match &parsed_ops[0] {
         ChangesetOp::Insert { values, .. } => {
-            assert_eq!(values.len(), 3, "column count in encoded bytes");
-            assert_eq!(values[0], Value::Integer(1));
-            assert_eq!(values[1], Value::Text("Alice".to_string()));
-            assert_eq!(values[2], Value::Integer(1));
+            assert_users_row(values, "Alice");
         }
         other => panic!("expected Insert in parsed bytes, got {other:?}"),
     }
@@ -126,18 +123,7 @@ fn pg_changeset_update() {
     match &ops[0] {
         ChangesetOp::Update { table, values, .. } => {
             assert_eq!(table.name(), "users");
-            assert_eq!(values.len(), 3, "three columns");
-            assert_eq!(values[0].0, Some(Value::Integer(1)), "old id");
-            assert_eq!(
-                values[1].0,
-                Some(Value::Text("Alice".to_string())),
-                "old name"
-            );
-            assert_eq!(
-                values[1].1,
-                Some(Value::Text("Alicia".to_string())),
-                "new name"
-            );
+            assert_users_update(values);
         }
         other => panic!("expected Update, got {other:?}"),
     }
@@ -150,9 +136,7 @@ fn pg_changeset_update() {
     assert_eq!(parsed_ops.len(), 1);
     match &parsed_ops[0] {
         ChangesetOp::Update { values, .. } => {
-            assert_eq!(values.len(), 3, "column count in encoded bytes");
-            assert_eq!(values[1].0, Some(Value::Text("Alice".to_string())));
-            assert_eq!(values[1].1, Some(Value::Text("Alicia".to_string())));
+            assert_parsed_users_update(values);
         }
         other => panic!("expected Update in parsed bytes, got {other:?}"),
     }
@@ -180,10 +164,7 @@ fn pg_changeset_delete() {
             table, old_values, ..
         } => {
             assert_eq!(table.name(), "users");
-            assert_eq!(old_values.len(), 3, "three columns");
-            assert_eq!(old_values[0], Value::Integer(1), "id");
-            assert_eq!(old_values[1], Value::Text("Alice".to_string()), "name");
-            assert_eq!(old_values[2], Value::Integer(1), "active=true encodes as 1");
+            assert_users_row(old_values, "Alice");
         }
         other => panic!("expected Delete, got {other:?}"),
     }
@@ -196,10 +177,7 @@ fn pg_changeset_delete() {
     assert_eq!(parsed_ops.len(), 1);
     match &parsed_ops[0] {
         ChangesetOp::Delete { old_values, .. } => {
-            assert_eq!(old_values.len(), 3, "column count in encoded bytes");
-            assert_eq!(old_values[0], Value::Integer(1));
-            assert_eq!(old_values[1], Value::Text("Alice".to_string()));
-            assert_eq!(old_values[2], Value::Integer(1));
+            assert_users_row(old_values, "Alice");
         }
         other => panic!("expected Delete in parsed bytes, got {other:?}"),
     }
@@ -225,10 +203,7 @@ fn pg_patchset_insert() {
     match &ops[0] {
         PatchsetOp::Insert { table, values, .. } => {
             assert_eq!(table.name(), "users");
-            assert_eq!(values.len(), 3, "three columns");
-            assert_eq!(values[0], Value::Integer(1), "id");
-            assert_eq!(values[1], Value::Text("Alice".to_string()), "name");
-            assert_eq!(values[2], Value::Integer(1), "active=true encodes as 1");
+            assert_users_row(values, "Alice");
         }
         other => panic!("expected Insert, got {other:?}"),
     }
@@ -241,10 +216,7 @@ fn pg_patchset_insert() {
     assert_eq!(parsed_ops.len(), 1);
     match &parsed_ops[0] {
         PatchsetOp::Insert { values, .. } => {
-            assert_eq!(values.len(), 3, "column count in encoded bytes");
-            assert_eq!(values[0], Value::Integer(1));
-            assert_eq!(values[1], Value::Text("Alice".to_string()));
-            assert_eq!(values[2], Value::Integer(1));
+            assert_users_row(values, "Alice");
         }
         other => panic!("expected Insert in parsed bytes, got {other:?}"),
     }
@@ -282,14 +254,7 @@ fn pg_patchset_update() {
             table, pk, entries, ..
         } => {
             assert_eq!(table.name(), "users");
-            assert_eq!(pk, &[Value::Integer(1)], "primary key");
-            assert_eq!(entries.len(), 3, "three column entries");
-            assert_eq!(
-                entries[1].1,
-                Some(Value::Text("Alicia".to_string())),
-                "new name"
-            );
-            assert_eq!(entries[2].1, Some(Value::Integer(1)), "new active");
+            assert_users_patchset_update(pk, entries);
         }
         other => panic!("expected Update, got {other:?}"),
     }
@@ -302,9 +267,7 @@ fn pg_patchset_update() {
     assert_eq!(parsed_ops.len(), 1);
     match &parsed_ops[0] {
         PatchsetOp::Update { pk, entries, .. } => {
-            assert_eq!(pk, &[Value::Integer(1)]);
-            assert_eq!(entries.len(), 3, "column count in encoded bytes");
-            assert_eq!(entries[1].1, Some(Value::Text("Alicia".to_string())));
+            assert_users_patchset_update(pk, entries);
         }
         other => panic!("expected Update in parsed bytes, got {other:?}"),
     }

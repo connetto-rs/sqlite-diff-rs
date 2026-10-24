@@ -495,6 +495,26 @@ fn pick_random(ids: &[Id], rng: &mut StdRng) -> Option<Id> {
     }
 }
 
+/// Build the SQL for a fresh `comments` row and record its id in `all_comments`.
+fn new_comment_sql(
+    rng: &mut StdRng,
+    ctr_comment: &mut IdCounter,
+    all_posts: &[Id],
+    all_users: &[Id],
+    all_comments: &mut Vec<Id>,
+) -> String {
+    let id = ctr_comment.next(rng);
+    let label = id.short_label();
+    let pid = pick_random(all_posts, rng).unwrap();
+    let uid = pick_random(all_users, rng).unwrap();
+    let ts: i64 = rng.random_range(1000000..2000000);
+    all_comments.push(id);
+    format!(
+        "INSERT INTO comments (id, post_id, user_id, content, created_at, is_deleted) \
+         VALUES ({id}, {pid}, {uid}, 'Comment {label}', {ts}, 0)"
+    )
+}
+
 /// Generate a mixed batch of `op_count` operations (INSERT/UPDATE/DELETE)
 /// spread across all five tables. Returns the same logical changes in three
 /// representations: SQL text, changeset bytes, and patchset bytes.
@@ -600,18 +620,13 @@ fn generate_scenario(
                          VALUES ({id}, {uid}, 'New post {label}', 'Content {label}', {ts}, 0, 1)"
                     )
                 }
-                2 => {
-                    let id = ctr_comment.next(rng);
-                    let label = id.short_label();
-                    let pid = pick_random(&all_posts, rng).unwrap();
-                    let uid = pick_random(&all_users, rng).unwrap();
-                    let ts: i64 = rng.random_range(1000000..2000000);
-                    all_comments.push(id);
-                    format!(
-                        "INSERT INTO comments (id, post_id, user_id, content, created_at, is_deleted) \
-                         VALUES ({id}, {pid}, {uid}, 'Comment {label}', {ts}, 0)"
-                    )
-                }
+                2 => new_comment_sql(
+                    rng,
+                    &mut ctr_comment,
+                    &all_posts,
+                    &all_users,
+                    &mut all_comments,
+                ),
                 3 => {
                     let id = ctr_tag.next(rng);
                     let label = id.short_label();
@@ -647,15 +662,12 @@ fn generate_scenario(
                         format!("UPDATE comments SET is_deleted = 1 WHERE id = {id}")
                     } else {
                         // No comments yet, fall back to an INSERT.
-                        let id = ctr_comment.next(rng);
-                        let label = id.short_label();
-                        let pid = pick_random(&all_posts, rng).unwrap();
-                        let uid = pick_random(&all_users, rng).unwrap();
-                        let ts: i64 = rng.random_range(1000000..2000000);
-                        all_comments.push(id);
-                        format!(
-                            "INSERT INTO comments (id, post_id, user_id, content, created_at, is_deleted) \
-                             VALUES ({id}, {pid}, {uid}, 'Comment {label}', {ts}, 0)"
+                        new_comment_sql(
+                            rng,
+                            &mut ctr_comment,
+                            &all_posts,
+                            &all_users,
+                            &mut all_comments,
                         )
                     }
                 }

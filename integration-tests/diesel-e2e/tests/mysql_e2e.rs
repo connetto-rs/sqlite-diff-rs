@@ -4,17 +4,10 @@
 //! Requires a running Docker daemon. Without it, `Mysql::default().start()`
 //! errors and the tests fail loudly.
 
-use diesel::connection::SimpleConnection;
-use diesel::prelude::*;
-use diesel::sql_query;
-use diesel::sql_types::{BigInt, Binary, Double, Nullable, Text};
+use diesel::Connection;
+use diesel::mysql::MysqlConnection;
 use testcontainers_modules::mysql;
 use testcontainers_modules::testcontainers::runners::SyncRunner;
-
-use diesel_e2e::{
-    blobs_schema, insert_blob_row, insert_three_users, kv_full_cycle, kv_schema,
-    update_alice_delete_bob, users_schema,
-};
 
 // MySQL identifiers: `LONGBLOB` for large binary, `DOUBLE` for floats, `TEXT`
 // for variable text. `name` uses `VARCHAR(255)` because MySQL requires an
@@ -42,36 +35,6 @@ CREATE TABLE kv (
     PRIMARY KEY (tenant_id, user_id)
 )";
 
-#[derive(QueryableByName, Debug, PartialEq)]
-struct UserRow {
-    #[diesel(sql_type = BigInt)]
-    id: i64,
-    #[diesel(sql_type = Text)]
-    name: String,
-    #[diesel(sql_type = Nullable<Text>)]
-    email: Option<String>,
-    #[diesel(sql_type = Nullable<Double>)]
-    score: Option<f64>,
-}
-
-#[derive(QueryableByName, Debug, PartialEq)]
-struct BlobRow {
-    #[diesel(sql_type = BigInt)]
-    id: i64,
-    #[diesel(sql_type = Nullable<Binary>)]
-    payload: Option<Vec<u8>>,
-}
-
-#[derive(QueryableByName, Debug, PartialEq)]
-struct KvRow {
-    #[diesel(sql_type = BigInt)]
-    tenant_id: i64,
-    #[diesel(sql_type = BigInt)]
-    user_id: i64,
-    #[diesel(sql_type = Nullable<Text>)]
-    value: Option<String>,
-}
-
 fn boot() -> (
     testcontainers_modules::testcontainers::Container<mysql::Mysql>,
     MysqlConnection,
@@ -96,80 +59,20 @@ fn boot() -> (
     (container, conn)
 }
 
-fn apply(
-    conn: &mut MysqlConnection,
-    patchset: &sqlite_diff_rs::PatchSet<sqlite_diff_rs::SimpleTable, String, Vec<u8>>,
-) {
-    for op in patchset.iter() {
-        op.execute(conn).expect("execute patchset op against MySQL");
-    }
-}
-
 #[test]
 fn users_insert_update_delete_full_cycle() {
     let (_container, mut conn) = boot();
-    conn.batch_execute(USERS_DDL).unwrap();
-
-    let schema = users_schema();
-    apply(&mut conn, &insert_three_users(&schema));
-
-    let rows: Vec<UserRow> = sql_query("SELECT id, name, email, score FROM users ORDER BY id")
-        .load(&mut conn)
-        .unwrap();
-    assert_eq!(rows.len(), 3);
-    assert_eq!(rows[0].id, 1);
-    assert_eq!(rows[0].name, "Alice");
-    assert_eq!(rows[0].email.as_deref(), Some("alice@example.com"));
-    assert_eq!(rows[0].score, Some(95.5));
-    assert_eq!(rows[1].id, 2);
-    assert_eq!(rows[1].email, None);
-    assert_eq!(rows[2].name, "Carol'); DROP TABLE users; --");
-    assert_eq!(rows[2].score, None);
-
-    apply(&mut conn, &update_alice_delete_bob(&schema));
-
-    let after: Vec<UserRow> = sql_query("SELECT id, name, email, score FROM users ORDER BY id")
-        .load(&mut conn)
-        .unwrap();
-    assert_eq!(after.len(), 2);
-    assert_eq!(after[0].id, 1);
-    assert_eq!(after[0].email.as_deref(), Some("alice+new@example.com"));
-    assert_eq!(after[0].score, Some(99.0));
-    assert_eq!(after[1].id, 3);
+    diesel_e2e::users_full_cycle(&mut conn, USERS_DDL);
 }
 
 #[test]
 fn blobs_null_and_raw_bytes_roundtrip() {
     let (_container, mut conn) = boot();
-    conn.batch_execute(BLOBS_DDL).unwrap();
-
-    let schema = blobs_schema();
-    apply(&mut conn, &insert_blob_row(&schema));
-
-    let rows: Vec<BlobRow> = sql_query("SELECT id, payload FROM blobs ORDER BY id")
-        .load(&mut conn)
-        .unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(
-        rows[0].payload.as_deref(),
-        Some(&[0x00, b'\'', 0x7F, 0x80, 0xFE, 0xFF][..])
-    );
+    diesel_e2e::blobs_roundtrip(&mut conn, BLOBS_DDL);
 }
 
 #[test]
 fn kv_composite_pk_lifecycle() {
     let (_container, mut conn) = boot();
-    conn.batch_execute(KV_DDL).unwrap();
-
-    let schema = kv_schema();
-    apply(&mut conn, &kv_full_cycle(&schema));
-
-    let rows: Vec<KvRow> =
-        sql_query("SELECT tenant_id, user_id, value FROM kv ORDER BY tenant_id, user_id")
-            .load(&mut conn)
-            .unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].tenant_id, 1);
-    assert_eq!(rows[0].user_id, 20);
-    assert_eq!(rows[0].value.as_deref(), Some("two-updated"));
+    diesel_e2e::kv_lifecycle(&mut conn, KV_DDL);
 }

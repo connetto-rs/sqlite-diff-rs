@@ -25,8 +25,8 @@ pub(crate) fn parse_uuid(s: &str) -> Result<[u8; 16], usize> {
     let mut out = [0u8; 16];
     let hex_positions: [usize; 16] = [0, 2, 4, 6, 9, 11, 14, 16, 19, 21, 24, 26, 28, 30, 32, 34];
     for (i, pos) in hex_positions.into_iter().enumerate() {
-        let hi = nibble(bytes[pos]).ok_or(s.len())?;
-        let lo = nibble(bytes[pos + 1]).ok_or(s.len())?;
+        let hi = hex_nibble(bytes[pos]).ok_or(s.len())?;
+        let lo = hex_nibble(bytes[pos + 1]).ok_or(s.len())?;
         out[i] = (hi << 4) | lo;
     }
     Ok(out)
@@ -50,8 +50,9 @@ fn strip_uuid_braces(s: &str) -> &str {
     }
 }
 
+/// The value of one ASCII hex digit, either case.
 #[inline]
-fn nibble(b: u8) -> Option<u8> {
+pub(crate) fn hex_nibble(b: u8) -> Option<u8> {
     match b {
         b'0'..=b'9' => Some(b - b'0'),
         b'a'..=b'f' => Some(b - b'a' + 10),

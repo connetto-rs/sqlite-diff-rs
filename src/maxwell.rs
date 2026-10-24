@@ -48,7 +48,7 @@ use crate::wire::{
     build_patch_delete, build_patchset_update, resolve_table,
 };
 
-use crate::builders::{DiffOps, DiffSetBuilder, PatchsetFormat};
+use crate::builders::{DeleteArg, DiffOps, DiffSetBuilder, Format, PatchsetFormat};
 use crate::wire::WireAdapter;
 use core::fmt::Debug;
 use core::hash::Hash;
@@ -145,31 +145,14 @@ where
         Sch: WireSchema<Table = T>,
         A: WireAdapter<Maxwell, S, B>,
     {
-        match self {
-            Message::Insert(row) | Message::BootstrapInsert(row) => {
-                let table = resolve_table(schema, Some(row.database.as_str()), row.table.as_str())?;
-                let insert = build_insert_from_maxwell(&row.data, table, adapter)?;
-                Ok(DiffOps::insert(builder, insert))
-            }
-            Message::Update(row) => {
-                let table = resolve_table(schema, Some(row.database.as_str()), row.table.as_str())?;
-                let update = build_changeset_update_from_maxwell(
-                    &row.data,
-                    row.old.as_ref(),
-                    table,
-                    adapter,
-                )?;
-                Ok(DiffOps::update(builder, update))
-            }
-            Message::Delete(row) => {
-                let table = resolve_table(schema, Some(row.database.as_str()), row.table.as_str())?;
-                let delete = build_changeset_delete_from_maxwell(&row.data, table, adapter)?;
-                Ok(DiffOps::delete(builder, delete))
-            }
-            // Bootstrap control events, DDL, and anything a newer Maxwell adds carry no
-            // row data to digest. `Message` is non-exhaustive, so this cannot enumerate.
-            _ => Ok(builder),
-        }
+        digest(
+            self,
+            builder,
+            schema,
+            adapter,
+            build_changeset_update_from_maxwell,
+            build_changeset_delete_from_maxwell,
+        )
     }
 }
 
@@ -192,26 +175,63 @@ where
         Sch: WireSchema<Table = T>,
         A: WireAdapter<Maxwell, S, B>,
     {
-        match self {
-            Message::Insert(row) | Message::BootstrapInsert(row) => {
-                let table = resolve_table(schema, Some(row.database.as_str()), row.table.as_str())?;
-                let insert = build_insert_from_maxwell(&row.data, table, adapter)?;
-                Ok(DiffOps::insert(builder, insert))
-            }
-            Message::Update(row) => {
-                let table = resolve_table(schema, Some(row.database.as_str()), row.table.as_str())?;
-                let update = build_patchset_update_from_maxwell(&row.data, table, adapter)?;
-                Ok(DiffOps::update(builder, update))
-            }
-            Message::Delete(row) => {
-                let table = resolve_table(schema, Some(row.database.as_str()), row.table.as_str())?;
-                let delete = build_patch_delete_from_maxwell(&row.data, table, adapter)?;
-                Ok(DiffOps::delete(builder, delete))
-            }
-            // Bootstrap control events, DDL, and anything a newer Maxwell adds carry no
-            // row data to digest. `Message` is non-exhaustive, so this cannot enumerate.
-            _ => Ok(builder),
+        digest(
+            self,
+            builder,
+            schema,
+            adapter,
+            |data, _old, table, adapter| build_patchset_update_from_maxwell(data, table, adapter),
+            build_patch_delete_from_maxwell,
+        )
+    }
+}
+
+/// One Maxwell row image, column name to JSON value.
+type RowImage = serde_json::Map<String, serde_json::Value>;
+
+/// Digests one Maxwell message into `builder`, building its UPDATE and DELETE rows with
+/// the format's `update` and `delete`.
+fn digest<F, T, S, B, Sch, A>(
+    message: &Message,
+    builder: DiffSetBuilder<F, T, S, B>,
+    schema: &Sch,
+    adapter: &A,
+    update: impl FnOnce(
+        &RowImage,
+        Option<&RowImage>,
+        &T,
+        &A,
+    ) -> Result<Update<T, F, S, B>, ConversionError>,
+    delete: impl FnOnce(&RowImage, &T, &A) -> Result<DeleteArg<F, T, S, B>, ConversionError>,
+) -> Result<DiffSetBuilder<F, T, S, B>, ConversionError>
+where
+    F: Format<S, B>,
+    T: NamedColumns + WireColumnTypes,
+    S: Clone + Debug + Hash + Eq + AsRef<str> + Default,
+    B: Clone + Debug + Hash + Eq + AsRef<[u8]> + Default,
+    Sch: WireSchema<Table = T>,
+    A: WireAdapter<Maxwell, S, B>,
+    DiffSetBuilder<F, T, S, B>: DiffOps<T, S, B, Format = F>,
+{
+    match message {
+        Message::Insert(row) | Message::BootstrapInsert(row) => {
+            let table = resolve_table(schema, Some(row.database.as_str()), row.table.as_str())?;
+            let insert = build_insert_from_maxwell(&row.data, table, adapter)?;
+            Ok(DiffOps::insert(builder, insert))
         }
+        Message::Update(row) => {
+            let table = resolve_table(schema, Some(row.database.as_str()), row.table.as_str())?;
+            let update = update(&row.data, row.old.as_ref(), table, adapter)?;
+            Ok(DiffOps::update(builder, update))
+        }
+        Message::Delete(row) => {
+            let table = resolve_table(schema, Some(row.database.as_str()), row.table.as_str())?;
+            let delete = delete(&row.data, table, adapter)?;
+            Ok(DiffOps::delete(builder, delete))
+        }
+        // Bootstrap control events, DDL, and anything a newer Maxwell adds carry no
+        // row data to digest. `Message` is non-exhaustive, so this cannot enumerate.
+        _ => Ok(builder),
     }
 }
 

@@ -10,8 +10,8 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use rusqlite::Connection;
 use sqlite_diff_rs::{
-    ChangeDelete, ChangeSet, ChangeUpdate, DiffOps, Insert, PatchDelete, PatchSet, PatchUpdate,
-    SimpleTable, TableSchema, Value, testing::byte_diff_report,
+    ChangeDelete, ChangeSet, ChangeUpdate, DiffFormat, DiffOps, DiffSetBuilder, Insert,
+    PatchDelete, PatchSet, PatchUpdate, SimpleTable, TableSchema, Value, testing::byte_diff_report,
 };
 use std::hint::black_box;
 use std::string::String;
@@ -503,100 +503,86 @@ static PATCH_COMMENT_DELETE_PK: &[Val] = &[Val::Integer(5)];
 static PATCH_POST_TAG_DELETE_PK: &[Val] = &[Val::Integer(3), Val::Integer(5)];
 static PATCH_USER_DELETE_PK: &[Val] = &[Val::Integer(4)];
 
-/// Generate changeset using rusqlite's session API
-fn rusqlite_changeset_with(schema: &str, operations: &[&str]) -> Vec<u8> {
+/// Run `operations` on `schema` under a rusqlite session and stream the result with `emit`.
+fn rusqlite_session_with(
+    schema: &str,
+    operations: &[&str],
+    emit: impl FnOnce(&mut rusqlite::session::Session<'_>, &mut Vec<u8>) -> rusqlite::Result<()>,
+) -> Vec<u8> {
     let conn = Connection::open_in_memory().unwrap();
-
-    // Set up session
     conn.execute_batch(schema).unwrap();
     let mut session = rusqlite::session::Session::new(&conn).unwrap();
     session.attach::<&str>(None).unwrap();
-
-    // Execute operations
     for op in operations {
         conn.execute(op, []).unwrap();
     }
-
-    // Generate changeset
     let mut bytes = Vec::new();
-    session.changeset_strm(&mut bytes).unwrap();
+    emit(&mut session, &mut bytes).unwrap();
     bytes
+}
+
+/// Generate changeset using rusqlite's session API
+fn rusqlite_changeset_with(schema: &str, operations: &[&str]) -> Vec<u8> {
+    rusqlite_session_with(schema, operations, |session, bytes| {
+        session.changeset_strm(bytes)
+    })
 }
 
 /// Generate patchset using rusqlite's session API
 fn rusqlite_patchset_with(schema: &str, operations: &[&str]) -> Vec<u8> {
-    let conn = Connection::open_in_memory().unwrap();
-
-    // Set up session
-    conn.execute_batch(schema).unwrap();
-    let mut session = rusqlite::session::Session::new(&conn).unwrap();
-    session.attach::<&str>(None).unwrap();
-
-    // Execute operations
-    for op in operations {
-        conn.execute(op, []).unwrap();
-    }
-
-    // Generate patchset
-    let mut bytes = Vec::new();
-    session.patchset_strm(&mut bytes).unwrap();
-    bytes
+    rusqlite_session_with(schema, operations, |session, bytes| {
+        session.patchset_strm(bytes)
+    })
 }
 
-/// Add insert operations for all tables to the changeset builder
-fn add_inserts_to_changeset<'a>(
-    mut builder: ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
+/// Builder over the borrowed bench tables in format `F`.
+type BenchBuilder<'a, F> = DiffSetBuilder<F, TableSchema<&'a str>, &'a str, &'a [u8]>;
+
+/// Add insert operations for all tables to a changeset or patchset builder
+fn add_inserts<'a, F>(
+    mut builder: BenchBuilder<'a, F>,
     users: &TableSchema<&'a str>,
     posts: &TableSchema<&'a str>,
     comments: &TableSchema<&'a str>,
     tags: &TableSchema<&'a str>,
     post_tags: &TableSchema<&'a str>,
+) -> BenchBuilder<'a, F>
+where
+    F: DiffFormat<&'a str, &'a [u8]>,
+    BenchBuilder<'a, F>: DiffOps<TableSchema<&'a str>, &'a str, &'a [u8], Format = F>,
+{
+    for (table, rows) in [
+        (users, USER_ROWS),
+        (posts, POST_ROWS),
+        (tags, TAG_ROWS),
+        (post_tags, POST_TAG_ROWS),
+        (comments, COMMENT_ROWS),
+    ] {
+        for row in rows {
+            let mut insert: Insert<_, &str, &[u8]> = Insert::from(table.clone());
+            for (i, val) in row.iter().enumerate() {
+                insert = insert.set(i, *val).unwrap();
+            }
+            builder = builder.insert(insert);
+        }
+    }
+    builder
+}
+
+/// Apply a batch of `(old_row, new_row)` updates against one table.
+fn apply_changeset_updates<'a>(
+    mut builder: ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
+    table: &TableSchema<&'a str>,
+    updates: &[(&[Val], &[Val])],
 ) -> ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]> {
-    // User inserts
-    for row in USER_ROWS {
-        let mut insert: Insert<_, &str, &[u8]> = Insert::from(users.clone());
-        for (i, val) in row.iter().enumerate() {
-            insert = insert.set(i, *val).unwrap();
+    for (old, new) in updates {
+        let mut update: ChangeUpdate<TableSchema<&'a str>, &'a str, &'a [u8]> =
+            ChangeUpdate::from(table.clone());
+        for (i, (o, n)) in old.iter().zip(new.iter()).enumerate() {
+            update = update.set(i, *o, *n).unwrap();
         }
-        builder = builder.insert(insert);
+        builder = builder.update(update);
     }
-
-    // Post inserts
-    for row in POST_ROWS {
-        let mut insert: Insert<_, &str, &[u8]> = Insert::from(posts.clone());
-        for (i, val) in row.iter().enumerate() {
-            insert = insert.set(i, *val).unwrap();
-        }
-        builder = builder.insert(insert);
-    }
-
-    // Tag inserts
-    for row in TAG_ROWS {
-        let mut insert: Insert<_, &str, &[u8]> = Insert::from(tags.clone());
-        for (i, val) in row.iter().enumerate() {
-            insert = insert.set(i, *val).unwrap();
-        }
-        builder = builder.insert(insert);
-    }
-
-    // Post-tag inserts
-    for row in POST_TAG_ROWS {
-        let mut insert: Insert<_, &str, &[u8]> = Insert::from(post_tags.clone());
-        for (i, val) in row.iter().enumerate() {
-            insert = insert.set(i, *val).unwrap();
-        }
-        builder = builder.insert(insert);
-    }
-
-    // Comment inserts
-    for row in COMMENT_ROWS {
-        let mut insert: Insert<_, &str, &[u8]> = Insert::from(comments.clone());
-        for (i, val) in row.iter().enumerate() {
-            insert = insert.set(i, *val).unwrap();
-        }
-        builder = builder.insert(insert);
-    }
-
     builder
 }
 
@@ -607,24 +593,10 @@ fn add_updates_to_changeset<'a>(
     posts: &TableSchema<&'a str>,
 ) -> ChangeSet<TableSchema<&'a str>, &'a str, &'a [u8]> {
     // User updates
-    for (old, new) in USER_UPDATES {
-        let mut update: ChangeUpdate<TableSchema<&'a str>, &'a str, &'a [u8]> =
-            ChangeUpdate::from(users.clone());
-        for (i, (o, n)) in old.iter().zip(new.iter()).enumerate() {
-            update = update.set(i, *o, *n).unwrap();
-        }
-        builder = builder.update(update);
-    }
+    builder = apply_changeset_updates(builder, users, USER_UPDATES);
 
     // Post updates
-    for (old, new) in POST_UPDATES {
-        let mut update: ChangeUpdate<TableSchema<&'a str>, &'a str, &'a [u8]> =
-            ChangeUpdate::from(posts.clone());
-        for (i, (o, n)) in old.iter().zip(new.iter()).enumerate() {
-            update = update.set(i, *o, *n).unwrap();
-        }
-        builder = builder.update(update);
-    }
+    builder = apply_changeset_updates(builder, posts, POST_UPDATES);
 
     builder
 }
@@ -667,67 +639,26 @@ fn builder_changeset() -> Vec<u8> {
     let mut builder: ChangeSet<TableSchema<&str>, &str, &[u8]> = ChangeSet::new();
 
     // Add all operations
-    builder = add_inserts_to_changeset(builder, &users, &posts, &comments, &tags, &post_tags);
+    builder = add_inserts(builder, &users, &posts, &comments, &tags, &post_tags);
     builder = add_updates_to_changeset(builder, &users, &posts);
     builder = add_deletes_to_changeset(builder, &users, &comments, &post_tags);
 
     builder.build()
 }
 
-/// Add insert operations for all tables to the patchset builder
-fn add_inserts_to_patchset<'a>(
+/// Apply a batch of `(column, new_value)` updates against one table.
+fn apply_patchset_updates<'a>(
     mut builder: PatchSet<TableSchema<&'a str>, &'a str, &'a [u8]>,
-    users: &TableSchema<&'a str>,
-    posts: &TableSchema<&'a str>,
-    comments: &TableSchema<&'a str>,
-    tags: &TableSchema<&'a str>,
-    post_tags: &TableSchema<&'a str>,
+    table: &TableSchema<&'a str>,
+    updates: &[&[(usize, Val)]],
 ) -> PatchSet<TableSchema<&'a str>, &'a str, &'a [u8]> {
-    // User inserts
-    for row in USER_ROWS {
-        let mut insert: Insert<_, &str, &[u8]> = Insert::from(users.clone());
-        for (i, val) in row.iter().enumerate() {
-            insert = insert.set(i, *val).unwrap();
+    for cols in updates {
+        let mut update: PatchUpdate<_, &str, &[u8]> = PatchUpdate::from(table.clone());
+        for (i, val) in *cols {
+            update = update.set(*i, *val).unwrap();
         }
-        builder = builder.insert(insert);
+        builder = builder.update(update);
     }
-
-    // Post inserts
-    for row in POST_ROWS {
-        let mut insert: Insert<_, &str, &[u8]> = Insert::from(posts.clone());
-        for (i, val) in row.iter().enumerate() {
-            insert = insert.set(i, *val).unwrap();
-        }
-        builder = builder.insert(insert);
-    }
-
-    // Tag inserts
-    for row in TAG_ROWS {
-        let mut insert: Insert<_, &str, &[u8]> = Insert::from(tags.clone());
-        for (i, val) in row.iter().enumerate() {
-            insert = insert.set(i, *val).unwrap();
-        }
-        builder = builder.insert(insert);
-    }
-
-    // Post-tag inserts
-    for row in POST_TAG_ROWS {
-        let mut insert: Insert<_, &str, &[u8]> = Insert::from(post_tags.clone());
-        for (i, val) in row.iter().enumerate() {
-            insert = insert.set(i, *val).unwrap();
-        }
-        builder = builder.insert(insert);
-    }
-
-    // Comment inserts
-    for row in COMMENT_ROWS {
-        let mut insert: Insert<_, &str, &[u8]> = Insert::from(comments.clone());
-        for (i, val) in row.iter().enumerate() {
-            insert = insert.set(i, *val).unwrap();
-        }
-        builder = builder.insert(insert);
-    }
-
     builder
 }
 
@@ -738,22 +669,10 @@ fn add_updates_to_patchset<'a>(
     posts: &TableSchema<&'a str>,
 ) -> PatchSet<TableSchema<&'a str>, &'a str, &'a [u8]> {
     // User updates
-    for cols in PATCH_USER_UPDATES {
-        let mut update: PatchUpdate<_, &str, &[u8]> = PatchUpdate::from(users.clone());
-        for (i, val) in *cols {
-            update = update.set(*i, *val).unwrap();
-        }
-        builder = builder.update(update);
-    }
+    builder = apply_patchset_updates(builder, users, PATCH_USER_UPDATES);
 
     // Post updates
-    for cols in PATCH_POST_UPDATES {
-        let mut update: PatchUpdate<_, &str, &[u8]> = PatchUpdate::from(posts.clone());
-        for (i, val) in *cols {
-            update = update.set(*i, *val).unwrap();
-        }
-        builder = builder.update(update);
-    }
+    builder = apply_patchset_updates(builder, posts, PATCH_POST_UPDATES);
 
     builder
 }
@@ -789,7 +708,7 @@ fn builder_patchset() -> Vec<u8> {
     let mut builder: PatchSet<TableSchema<&str>, &str, &[u8]> = PatchSet::new();
 
     // Add all operations
-    builder = add_inserts_to_patchset(builder, &users, &posts, &comments, &tags, &post_tags);
+    builder = add_inserts(builder, &users, &posts, &comments, &tags, &post_tags);
     builder = add_updates_to_patchset(builder, &users, &posts);
     builder = add_deletes_to_patchset(builder, &users, &comments, &post_tags);
 

@@ -40,6 +40,41 @@ fn y_fmt(y: &f64) -> String {
     }
 }
 
+/// Draw one line series (line, point markers, legend entry) per palette slot.
+fn draw_line_series<DB: DrawingBackend, CT: CoordTranslate<From = (f64, f64)>>(
+    chart: &mut ChartContext<'_, DB, CT>,
+    data: &[(f64, Vec<f64>)],
+    names: &[&str],
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    <DB as DrawingBackend>::ErrorType: 'static,
+{
+    let n = names.len().min(PALETTE.len());
+    for i in 0..n {
+        let color = PALETTE[i];
+        let width = STROKE_W[i];
+
+        let points: Vec<(f64, f64)> = data
+            .iter()
+            .filter_map(|(x, ys)| ys.get(i).map(|y| (*x, *y)))
+            .collect();
+
+        chart
+            .draw_series(LineSeries::new(points.clone(), color.stroke_width(width)))?
+            .label(names[i])
+            .legend(move |(x, y)| {
+                PathElement::new(vec![(x, y), (x + 20, y)], color.stroke_width(width))
+            });
+
+        chart.draw_series(
+            points
+                .iter()
+                .map(|&(x, y)| Circle::new((x, y), 3, color.filled())),
+        )?;
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -89,29 +124,7 @@ pub fn line_chart(
         .y_label_formatter(&y_fmt)
         .draw()?;
 
-    let n = names.len().min(PALETTE.len());
-    for i in 0..n {
-        let color = PALETTE[i];
-        let width = STROKE_W[i];
-
-        let points: Vec<(f64, f64)> = data
-            .iter()
-            .filter_map(|(x, ys)| ys.get(i).map(|y| (*x, *y)))
-            .collect();
-
-        chart
-            .draw_series(LineSeries::new(points.clone(), color.stroke_width(width)))?
-            .label(names[i])
-            .legend(move |(x, y)| {
-                PathElement::new(vec![(x, y), (x + 20, y)], color.stroke_width(width))
-            });
-
-        chart.draw_series(
-            points
-                .iter()
-                .map(|&(x, y)| Circle::new((x, y), 3, color.filled())),
-        )?;
-    }
+    draw_line_series(&mut chart, data, names)?;
 
     chart
         .configure_series_labels()
@@ -188,28 +201,7 @@ pub fn stacked_size_and_time(
         .draw()?;
 
     let n = names.len().min(PALETTE.len());
-    for i in 0..n {
-        let color = PALETTE[i];
-        let width = STROKE_W[i];
-
-        let points: Vec<(f64, f64)> = size_data
-            .iter()
-            .filter_map(|(x, ys)| ys.get(i).map(|y| (*x, *y)))
-            .collect();
-
-        size_chart
-            .draw_series(LineSeries::new(points.clone(), color.stroke_width(width)))?
-            .label(names[i])
-            .legend(move |(x, y)| {
-                PathElement::new(vec![(x, y), (x + 20, y)], color.stroke_width(width))
-            });
-
-        size_chart.draw_series(
-            points
-                .iter()
-                .map(|&(x, y)| Circle::new((x, y), 3, color.filled())),
-        )?;
-    }
+    draw_line_series(&mut size_chart, size_data, names)?;
 
     size_chart
         .configure_series_labels()

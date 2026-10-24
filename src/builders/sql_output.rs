@@ -99,6 +99,48 @@ fn format_insert<T: ColumnNames, S: AsRef<str>, B: AsRef<[u8]>>(
     sql
 }
 
+/// Appends `column = value` for each `(column index, value)` cell, joined by `separator`.
+fn push_cells<'a, T: ColumnNames, S: AsRef<str> + 'a, B: AsRef<[u8]> + 'a>(
+    sql: &mut String,
+    table: &T,
+    separator: &str,
+    cells: impl Iterator<Item = (usize, &'a Value<S, B>)>,
+) {
+    for (i, (col_idx, value)) in cells.enumerate() {
+        if i > 0 {
+            sql.push_str(separator);
+        }
+        if let Some(name) = table.column_name(col_idx) {
+            sql.push_str(&quote_identifier(name));
+        } else {
+            write!(sql, "\"col{col_idx}\"").unwrap();
+        }
+        sql.push_str(" = ");
+        write!(sql, "{value}").unwrap();
+    }
+}
+
+/// The primary-key cells of a row whose key values are `pk`, in key order.
+fn pk_cells<'a, T: ColumnNames, S, B>(
+    table: &'a T,
+    pk: &'a [Value<S, B>],
+) -> impl Iterator<Item = (usize, &'a Value<S, B>)> {
+    table
+        .primary_key_columns()
+        .enumerate()
+        .map(move |(pk_ordinal, col_idx)| (col_idx, &pk[pk_ordinal]))
+}
+
+/// The non-key cells an UPDATE sets, from each column's new value.
+fn set_cells<'a, T: ColumnNames, S: 'a, B: 'a>(
+    table: &'a T,
+    news: impl Iterator<Item = &'a MaybeValue<S, B>>,
+) -> impl Iterator<Item = (usize, &'a Value<S, B>)> {
+    news.enumerate()
+        .filter_map(|(col_idx, new)| new.as_ref().map(|value| (col_idx, value)))
+        .filter(move |(col_idx, _)| table.primary_key_index(*col_idx).is_none())
+}
+
 /// Format a DELETE statement (changeset format - has all old values).
 fn format_delete_changeset<T: ColumnNames, S: AsRef<str>, B: AsRef<[u8]>>(
     table: &T,
@@ -107,24 +149,12 @@ fn format_delete_changeset<T: ColumnNames, S: AsRef<str>, B: AsRef<[u8]>>(
     let mut sql = String::new();
     write!(sql, "DELETE FROM {}", quote_identifier(table.name())).unwrap();
     sql.push_str(" WHERE ");
-
     // Use PK columns for the WHERE clause
-    let mut first = true;
-    for (col_idx, value) in values.iter().enumerate() {
-        if table.primary_key_index(col_idx).is_some() {
-            if !first {
-                sql.push_str(" AND ");
-            }
-            first = false;
-            if let Some(name) = table.column_name(col_idx) {
-                sql.push_str(&quote_identifier(name));
-            } else {
-                write!(sql, "\"col{col_idx}\"").unwrap();
-            }
-            sql.push_str(" = ");
-            write!(sql, "{value}").unwrap();
-        }
-    }
+    let keys = values
+        .iter()
+        .enumerate()
+        .filter(|(col_idx, _)| table.primary_key_index(*col_idx).is_some());
+    push_cells(&mut sql, table, " AND ", keys);
     sql
 }
 
@@ -136,21 +166,7 @@ fn format_delete_patchset<T: ColumnNames, S: AsRef<str>, B: AsRef<[u8]>>(
     let mut sql = String::new();
     write!(sql, "DELETE FROM {}", quote_identifier(table.name())).unwrap();
     sql.push_str(" WHERE ");
-
-    let mut first = true;
-    for (pk_ordinal, col_idx) in table.primary_key_columns().enumerate() {
-        if !first {
-            sql.push_str(" AND ");
-        }
-        first = false;
-        if let Some(name) = table.column_name(col_idx) {
-            sql.push_str(&quote_identifier(name));
-        } else {
-            write!(sql, "\"col{col_idx}\"").unwrap();
-        }
-        sql.push_str(" = ");
-        write!(sql, "{}", pk[pk_ordinal]).unwrap();
-    }
+    push_cells(&mut sql, table, " AND ", pk_cells(table, pk));
     sql
 }
 
@@ -162,49 +178,21 @@ fn format_update_changeset<T: ColumnNames, S: AsRef<str>, B: AsRef<[u8]>>(
     let mut sql = String::new();
     write!(sql, "UPDATE {}", quote_identifier(table.name())).unwrap();
     sql.push_str(" SET ");
-
-    // SET clause: columns that changed (have new values)
-    let mut first_set = true;
-    for (col_idx, (_old, new)) in pairs.iter().enumerate() {
-        if let Some(new_val) = new {
-            // Skip PK columns in SET (they go in WHERE)
-            if table.primary_key_index(col_idx).is_some() {
-                continue;
-            }
-            if !first_set {
-                sql.push_str(", ");
-            }
-            first_set = false;
-            if let Some(name) = table.column_name(col_idx) {
-                sql.push_str(&quote_identifier(name));
-            } else {
-                write!(sql, "\"col{col_idx}\"").unwrap();
-            }
-            sql.push_str(" = ");
-            write!(sql, "{new_val}").unwrap();
-        }
-    }
-
+    // SET clause: columns that changed (have new values), PK columns go in WHERE
+    push_cells(
+        &mut sql,
+        table,
+        ", ",
+        set_cells(table, pairs.iter().map(|(_old, new)| new)),
+    );
     // WHERE clause: use old PK values
     sql.push_str(" WHERE ");
-    let mut first_where = true;
-    for (col_idx, (old, _new)) in pairs.iter().enumerate() {
-        if table.primary_key_index(col_idx).is_some() {
-            if let Some(old_val) = old {
-                if !first_where {
-                    sql.push_str(" AND ");
-                }
-                first_where = false;
-                if let Some(name) = table.column_name(col_idx) {
-                    sql.push_str(&quote_identifier(name));
-                } else {
-                    write!(sql, "\"col{col_idx}\"").unwrap();
-                }
-                sql.push_str(" = ");
-                write!(sql, "{old_val}").unwrap();
-            }
-        }
-    }
+    let old_keys = pairs
+        .iter()
+        .enumerate()
+        .filter(|(col_idx, _)| table.primary_key_index(*col_idx).is_some())
+        .filter_map(|(col_idx, (old, _new))| old.as_ref().map(|value| (col_idx, value)));
+    push_cells(&mut sql, table, " AND ", old_keys);
     sql
 }
 
@@ -217,44 +205,15 @@ fn format_update_patchset<T: ColumnNames, S: AsRef<str>, B: AsRef<[u8]>>(
     let mut sql = String::new();
     write!(sql, "UPDATE {}", quote_identifier(table.name())).unwrap();
     sql.push_str(" SET ");
-
     // SET clause: columns that changed (have new values), excluding PK
-    let mut first_set = true;
-    for (col_idx, ((), new)) in pairs.iter().enumerate() {
-        if let Some(new_val) = new {
-            // Skip PK columns in SET
-            if table.primary_key_index(col_idx).is_some() {
-                continue;
-            }
-            if !first_set {
-                sql.push_str(", ");
-            }
-            first_set = false;
-            if let Some(name) = table.column_name(col_idx) {
-                sql.push_str(&quote_identifier(name));
-            } else {
-                write!(sql, "\"col{col_idx}\"").unwrap();
-            }
-            sql.push_str(" = ");
-            write!(sql, "{new_val}").unwrap();
-        }
-    }
-
+    push_cells(
+        &mut sql,
+        table,
+        ", ",
+        set_cells(table, pairs.iter().map(|((), new)| new)),
+    );
     sql.push_str(" WHERE ");
-    let mut first_where = true;
-    for (pk_ordinal, col_idx) in table.primary_key_columns().enumerate() {
-        if !first_where {
-            sql.push_str(" AND ");
-        }
-        first_where = false;
-        if let Some(name) = table.column_name(col_idx) {
-            sql.push_str(&quote_identifier(name));
-        } else {
-            write!(sql, "\"col{col_idx}\"").unwrap();
-        }
-        sql.push_str(" = ");
-        write!(sql, "{}", pk[pk_ordinal]).unwrap();
-    }
+    push_cells(&mut sql, table, " AND ", pk_cells(table, pk));
     sql
 }
 

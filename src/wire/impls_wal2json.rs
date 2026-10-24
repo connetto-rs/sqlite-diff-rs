@@ -10,7 +10,6 @@ use super::decoder::{
     TimestampDecoder, TimestampTzDecoder, UuidBlob16Decoder, UuidText36Decoder,
 };
 use super::error::DecodeError;
-use super::scalar_helpers::normalize_real;
 use super::temporal::{Temporal, decode_temporal_text};
 use super::type_map::{TypeMap, TypeMapDefaults};
 use super::wire_type::WireType;
@@ -76,33 +75,7 @@ impl<S, B> Decoder<Wal2Json, S, B> for BoolDecoder {
 
 impl<S, B> Decoder<Wal2Json, S, B> for IntDecoder {
     fn decode(&self, payload: Wal2JsonColumn<'_>) -> Result<Value<S, B>, DecodeError> {
-        match payload.value {
-            serde_json::Value::Null => Ok(Value::Null),
-            serde_json::Value::Number(n) => match n.as_i64() {
-                Some(i) => Ok(Value::Integer(i)),
-                None => Err(DecodeError::IntegerOverflow {
-                    column: payload.column_name.to_string(),
-                    digits: n.to_string(),
-                }),
-            },
-            serde_json::Value::Bool(_) => Err(DecodeError::WrongPayloadKind {
-                column: payload.column_name.to_string(),
-                expected: "JSON integer number",
-                actual: "JSON boolean",
-            }),
-            serde_json::Value::String(_) => Err(DecodeError::WrongPayloadKind {
-                column: payload.column_name.to_string(),
-                expected: "JSON integer number",
-                actual: "JSON string",
-            }),
-            serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-                Err(DecodeError::WrongPayloadKind {
-                    column: payload.column_name.to_string(),
-                    expected: "JSON integer number",
-                    actual: "JSON array or object",
-                })
-            }
-        }
+        super::json_decoders::decode_json_int(&payload)
     }
 }
 
@@ -115,28 +88,7 @@ where
     S: From<alloc::string::String>,
 {
     fn decode(&self, payload: Wal2JsonColumn<'_>) -> Result<Value<S, B>, DecodeError> {
-        match payload.value {
-            serde_json::Value::Null => Ok(Value::Null),
-            serde_json::Value::Number(n) => match n.as_i64() {
-                Some(i) => Ok(Value::Integer(i)),
-                None => Ok(Value::Text(S::from(n.to_string()))),
-            },
-            serde_json::Value::String(s)
-                if s.trim_start_matches('-')
-                    .chars()
-                    .all(|c| c.is_ascii_digit()) =>
-            {
-                match s.parse::<i64>() {
-                    Ok(i) => Ok(Value::Integer(i)),
-                    Err(_) => Ok(Value::Text(S::from(s.clone()))),
-                }
-            }
-            _ => Err(DecodeError::WrongPayloadKind {
-                column: payload.column_name.to_string(),
-                expected: "JSON integer number or numeric string",
-                actual: "other JSON shape",
-            }),
-        }
+        super::json_decoders::decode_json_int64_or_text(&payload)
     }
 }
 
@@ -148,34 +100,7 @@ where
 
 impl<S, B> Decoder<Wal2Json, S, B> for RealDecoder {
     fn decode(&self, payload: Wal2JsonColumn<'_>) -> Result<Value<S, B>, DecodeError> {
-        match payload.value {
-            serde_json::Value::Null => Ok(Value::Null),
-            serde_json::Value::Number(n) => match n.as_f64() {
-                Some(f) => Ok(normalize_real(f)),
-                None => Err(DecodeError::WrongPayloadKind {
-                    column: payload.column_name.to_string(),
-                    expected: "IEEE 754 float number",
-                    actual: "arbitrary-precision JSON number",
-                }),
-            },
-            serde_json::Value::Bool(_) => Err(DecodeError::WrongPayloadKind {
-                column: payload.column_name.to_string(),
-                expected: "IEEE 754 float number",
-                actual: "JSON boolean",
-            }),
-            serde_json::Value::String(_) => Err(DecodeError::WrongPayloadKind {
-                column: payload.column_name.to_string(),
-                expected: "IEEE 754 float number",
-                actual: "JSON string",
-            }),
-            serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-                Err(DecodeError::WrongPayloadKind {
-                    column: payload.column_name.to_string(),
-                    expected: "IEEE 754 float number",
-                    actual: "JSON array or object",
-                })
-            }
-        }
+        super::json_decoders::decode_json_real(&payload)
     }
 }
 

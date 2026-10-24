@@ -14,15 +14,12 @@ use diesel::prelude::QueryableByName;
 use diesel::query_builder::AstPass;
 use diesel::result::QueryResult;
 use diesel::sql_query;
-use diesel::sql_types::{BigInt, Bool, Double, Nullable, Text};
+use diesel::sql_types::{BigInt, Bool};
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl, SimpleAsyncConnection};
 use testcontainers_modules::postgres;
 use testcontainers_modules::testcontainers::ContainerAsync;
 use testcontainers_modules::testcontainers::runners::AsyncRunner;
 
-use diesel_e2e::{
-    insert_three_users, kv_full_cycle, kv_schema, update_alice_delete_bob, users_schema,
-};
 use sqlite_diff_rs::{
     Adapter, ApplyOpsAsync, Binder, DefaultBinder, DiffOps, Insert, PatchSet, SimpleTable, Value,
 };
@@ -42,28 +39,6 @@ CREATE TABLE kv (
     value     TEXT,
     PRIMARY KEY (tenant_id, user_id)
 )";
-
-#[derive(QueryableByName, Debug, PartialEq)]
-struct UserRow {
-    #[diesel(sql_type = BigInt)]
-    id: i64,
-    #[diesel(sql_type = Text)]
-    name: String,
-    #[diesel(sql_type = Nullable<Text>)]
-    email: Option<String>,
-    #[diesel(sql_type = Nullable<Double>)]
-    score: Option<f64>,
-}
-
-#[derive(QueryableByName, Debug, PartialEq)]
-struct KvRow {
-    #[diesel(sql_type = BigInt)]
-    tenant_id: i64,
-    #[diesel(sql_type = BigInt)]
-    user_id: i64,
-    #[diesel(sql_type = Nullable<Text>)]
-    value: Option<String>,
-}
 
 async fn boot() -> (ContainerAsync<postgres::Postgres>, AsyncPgConnection) {
     let container = postgres::Postgres::default()
@@ -85,61 +60,13 @@ async fn boot() -> (ContainerAsync<postgres::Postgres>, AsyncPgConnection) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn users_insert_update_delete_full_cycle_async() {
     let (_container, mut conn) = boot().await;
-    conn.batch_execute(USERS_DDL).await.unwrap();
-
-    let schema = users_schema();
-    insert_three_users(&schema)
-        .iter()
-        .apply_async(&mut conn)
-        .await
-        .unwrap();
-
-    let rows: Vec<UserRow> = sql_query("SELECT id, name, email, score FROM users ORDER BY id")
-        .load(&mut conn)
-        .await
-        .unwrap();
-    assert_eq!(rows.len(), 3);
-    assert_eq!(rows[0].email.as_deref(), Some("alice@example.com"));
-    assert_eq!(rows[0].score, Some(95.5));
-    assert_eq!(rows[1].email, None);
-    assert_eq!(rows[2].name, "Carol'); DROP TABLE users; --");
-
-    update_alice_delete_bob(&schema)
-        .iter()
-        .apply_transactional_async(&mut conn)
-        .await
-        .unwrap();
-
-    let after: Vec<UserRow> = sql_query("SELECT id, name, email, score FROM users ORDER BY id")
-        .load(&mut conn)
-        .await
-        .unwrap();
-    assert_eq!(after.len(), 2);
-    assert_eq!(after[0].email.as_deref(), Some("alice+new@example.com"));
-    assert_eq!(after[1].id, 3);
+    diesel_e2e::users_full_cycle_async(&mut conn, USERS_DDL).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn kv_composite_pk_lifecycle_async() {
     let (_container, mut conn) = boot().await;
-    conn.batch_execute(KV_DDL).await.unwrap();
-
-    let schema = kv_schema();
-    kv_full_cycle(&schema)
-        .iter()
-        .apply_transactional_async(&mut conn)
-        .await
-        .unwrap();
-
-    let rows: Vec<KvRow> =
-        sql_query("SELECT tenant_id, user_id, value FROM kv ORDER BY tenant_id, user_id")
-            .load(&mut conn)
-            .await
-            .unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].tenant_id, 1);
-    assert_eq!(rows[0].user_id, 20);
-    assert_eq!(rows[0].value.as_deref(), Some("two-updated"));
+    diesel_e2e::kv_lifecycle_async(&mut conn, KV_DDL).await;
 }
 
 // Native BOOLEAN bind through the adapter over the async connection: the

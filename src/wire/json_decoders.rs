@@ -9,6 +9,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use super::error::DecodeError;
+use super::scalar_helpers::normalize_real;
 use crate::encoding::Value;
 
 /// Abstracts access to the JSON payload value and column name for a CDC column.
@@ -63,6 +64,104 @@ pub(crate) fn decode_json_str_with<P: AsJsonValue, S, B>(
                 actual: "JSON array or object",
             })
         }
+    }
+}
+
+/// Hands a JSON number column to `decode`, and maps JSON null to [`Value::Null`].
+///
+/// # Errors
+///
+/// Returns [`DecodeError::WrongPayloadKind`] naming `expected` if the JSON value is not a
+/// number or null, and propagates `decode`'s error.
+pub(crate) fn decode_json_number_with<P: AsJsonValue, S, B>(
+    payload: &P,
+    expected: &'static str,
+    decode: impl FnOnce(&serde_json::Number) -> Result<Value<S, B>, DecodeError>,
+) -> Result<Value<S, B>, DecodeError> {
+    let actual = match payload.json_value() {
+        serde_json::Value::Null => return Ok(Value::Null),
+        serde_json::Value::Number(n) => return decode(n),
+        serde_json::Value::Bool(_) => "JSON boolean",
+        serde_json::Value::String(_) => "JSON string",
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => "JSON array or object",
+    };
+    Err(DecodeError::WrongPayloadKind {
+        column: payload.column_name().to_string(),
+        expected,
+        actual,
+    })
+}
+
+/// Decodes a JSON integer column into [`Value::Integer`], or [`Value::Null`].
+///
+/// # Errors
+///
+/// Returns [`DecodeError::IntegerOverflow`] if the number does not fit an `i64`, and
+/// [`DecodeError::WrongPayloadKind`] if the JSON value is not a number or null.
+pub(crate) fn decode_json_int<P: AsJsonValue, S, B>(
+    payload: &P,
+) -> Result<Value<S, B>, DecodeError> {
+    decode_json_number_with(payload, "JSON integer number", |n| {
+        n.as_i64()
+            .map(Value::Integer)
+            .ok_or_else(|| DecodeError::IntegerOverflow {
+                column: payload.column_name().to_string(),
+                digits: n.to_string(),
+            })
+    })
+}
+
+/// Decodes a JSON float column into a normalized [`Value::Real`], or [`Value::Null`].
+///
+/// # Errors
+///
+/// Returns [`DecodeError::WrongPayloadKind`] if the number has no `f64` form, or if the
+/// JSON value is not a number or null.
+pub(crate) fn decode_json_real<P: AsJsonValue, S, B>(
+    payload: &P,
+) -> Result<Value<S, B>, DecodeError> {
+    decode_json_number_with(payload, "IEEE 754 float number", |n| {
+        n.as_f64()
+            .map(normalize_real)
+            .ok_or_else(|| DecodeError::WrongPayloadKind {
+                column: payload.column_name().to_string(),
+                expected: "IEEE 754 float number",
+                actual: "arbitrary-precision JSON number",
+            })
+    })
+}
+
+/// Decodes a JSON integer, or a numeric string, into [`Value::Integer`] when it fits an
+/// `i64` and into base-10 [`Value::Text`] otherwise, or [`Value::Null`].
+///
+/// # Errors
+///
+/// Returns [`DecodeError::WrongPayloadKind`] if the JSON value is neither a number, a
+/// numeric string, nor null.
+pub(crate) fn decode_json_int64_or_text<P: AsJsonValue, S, B>(
+    payload: &P,
+) -> Result<Value<S, B>, DecodeError>
+where
+    S: From<String>,
+{
+    match payload.json_value() {
+        serde_json::Value::Null => Ok(Value::Null),
+        serde_json::Value::Number(n) => Ok(n
+            .as_i64()
+            .map_or_else(|| Value::Text(S::from(n.to_string())), Value::Integer)),
+        serde_json::Value::String(s)
+            if s.trim_start_matches('-')
+                .chars()
+                .all(|c| c.is_ascii_digit()) =>
+        {
+            Ok(s.parse::<i64>()
+                .map_or_else(|_| Value::Text(S::from(s.clone())), Value::Integer))
+        }
+        _ => Err(DecodeError::WrongPayloadKind {
+            column: payload.column_name().to_string(),
+            expected: "JSON integer number or numeric string",
+            actual: "other JSON shape",
+        }),
     }
 }
 

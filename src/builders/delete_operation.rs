@@ -184,21 +184,14 @@ mod tests {
     }
 
     #[test]
-    fn test_change_delete_set_out_of_bounds() {
-        let err = ChangeDelete::<_, String, Vec<u8>>::from(users())
-            .set(5, 1i64)
-            .unwrap_err();
+    fn test_change_delete_out_of_bounds_columns() {
+        let delete = ChangeDelete::<_, String, Vec<u8>>::from(users());
+        let err = delete.clone().set(5, 1i64).unwrap_err();
         assert!(
             matches!(err, Error::ColumnIndexOutOfBounds(5, 2)),
             "got {err:?}"
         );
-    }
-
-    #[test]
-    fn test_change_delete_set_null_out_of_bounds() {
-        let err = ChangeDelete::<_, String, Vec<u8>>::from(users())
-            .set_null(2)
-            .unwrap_err();
+        let err = delete.set_null(2).unwrap_err();
         assert!(
             matches!(err, Error::ColumnIndexOutOfBounds(2, 2)),
             "got {err:?}"

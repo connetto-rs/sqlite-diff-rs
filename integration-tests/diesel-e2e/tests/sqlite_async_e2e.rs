@@ -10,13 +10,13 @@
 use diesel::prelude::QueryableByName;
 use diesel::result::QueryResult;
 use diesel::sql_query;
-use diesel::sql_types::{BigInt, Double, Nullable, Text};
+use diesel::sql_types::BigInt;
 use diesel::sqlite::{Sqlite, SqliteConnection};
 use diesel_async::sync_connection_wrapper::SyncConnectionWrapper;
 use diesel_async::{AsyncConnection, RunQueryDsl, SimpleAsyncConnection};
 use diesel_e2e::{
-    duplicate_email_patchset, insert_three_users, kv_full_cycle, kv_schema,
-    update_alice_delete_bob, users_schema,
+    KvRow, UserRow, duplicate_email_patchset, insert_three_users, kv_full_cycle, kv_schema,
+    users_schema,
 };
 use sqlite_diff_rs::{
     Adapter, ApplyOpsAsync, Binder, DefaultBinder, DiffOps, Insert, PatchSet, SimpleTable, Value,
@@ -49,28 +49,6 @@ CREATE TABLE users (
 )";
 
 #[derive(QueryableByName, Debug, PartialEq)]
-struct UserRow {
-    #[diesel(sql_type = BigInt)]
-    id: i64,
-    #[diesel(sql_type = Text)]
-    name: String,
-    #[diesel(sql_type = Nullable<Text>)]
-    email: Option<String>,
-    #[diesel(sql_type = Nullable<Double>)]
-    score: Option<f64>,
-}
-
-#[derive(QueryableByName, Debug, PartialEq)]
-struct KvRow {
-    #[diesel(sql_type = BigInt)]
-    tenant_id: i64,
-    #[diesel(sql_type = BigInt)]
-    user_id: i64,
-    #[diesel(sql_type = Nullable<Text>)]
-    value: Option<String>,
-}
-
-#[derive(QueryableByName, Debug, PartialEq)]
 struct CountRow {
     #[diesel(sql_type = BigInt)]
     n: i64,
@@ -85,44 +63,7 @@ async fn conn() -> Db {
 #[tokio::test]
 async fn users_insert_update_delete_full_cycle_async() {
     let mut conn = conn().await;
-    conn.batch_execute(USERS_DDL).await.unwrap();
-
-    let schema = users_schema();
-    let inserted = insert_three_users(&schema);
-    let count = inserted.iter().apply_async(&mut conn).await.unwrap();
-    assert_eq!(count, 3);
-
-    let after_insert: Vec<UserRow> =
-        sql_query("SELECT id, name, email, score FROM users ORDER BY id")
-            .load(&mut conn)
-            .await
-            .unwrap();
-    assert_eq!(after_insert.len(), 3);
-    assert_eq!(after_insert[0].id, 1);
-    assert_eq!(after_insert[0].email.as_deref(), Some("alice@example.com"));
-    assert_eq!(after_insert[0].score, Some(95.5));
-    assert_eq!(after_insert[1].email, None);
-    assert_eq!(after_insert[2].name, "Carol'); DROP TABLE users; --");
-    assert_eq!(after_insert[2].score, None);
-
-    update_alice_delete_bob(&schema)
-        .iter()
-        .apply_async(&mut conn)
-        .await
-        .unwrap();
-
-    let after_update: Vec<UserRow> =
-        sql_query("SELECT id, name, email, score FROM users ORDER BY id")
-            .load(&mut conn)
-            .await
-            .unwrap();
-    assert_eq!(after_update.len(), 2);
-    assert_eq!(
-        after_update[0].email.as_deref(),
-        Some("alice+new@example.com")
-    );
-    assert_eq!(after_update[0].score, Some(99.0));
-    assert_eq!(after_update[1].id, 3); // Bob deleted
+    diesel_e2e::users_full_cycle_async(&mut conn, USERS_DDL).await;
 }
 
 #[tokio::test]

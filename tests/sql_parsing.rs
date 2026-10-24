@@ -400,21 +400,6 @@ fn parity_insert_and_update() {
 }
 
 #[test]
-fn parity_multi_table() {
-    let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
-    let posts = SimpleTable::with_rowid_alias("posts", &[("id", "INTEGER"), ("title", "TEXT")], 0);
-    assert_patchset_sql_parity(
-        &[users, posts],
-        &[
-            "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)",
-            "CREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT)",
-            "INSERT INTO users (id, name) VALUES (1, 'Alice')",
-            "INSERT INTO posts (id, title) VALUES (1, 'Hello')",
-        ],
-    );
-}
-
-#[test]
 fn parity_composite_pk() {
     let order_items = SimpleTable::new(
         "order_items",

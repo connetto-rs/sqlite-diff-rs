@@ -14,6 +14,8 @@ mod sql_output;
 mod update_operation;
 mod view;
 
+#[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]
+pub(crate) use change::DeleteArg;
 pub use change::{ChangeSet, DiffOps, DiffSet, DiffSetBuilder, PatchSet};
 pub use delete_operation::{ChangeDelete, PatchDelete};
 #[cfg(feature = "diesel-async")]

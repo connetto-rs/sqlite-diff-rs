@@ -33,7 +33,9 @@ type UpdateValues = Vec<(MaybeValue<String, Vec<u8>>, MaybeValue<String, Vec<u8>
 
 /// Type alias for parsed values result.
 type ParsedValues = (Vec<MaybeValue<String, Vec<u8>>>, usize);
-use crate::builders::{ChangesetFormat, DiffSet, DiffSetBuilder, Operation, PatchsetFormat};
+use crate::builders::{
+    ChangesetFormat, DiffSet, DiffSetBuilder, Format, Operation, PatchsetFormat,
+};
 use crate::encoding::varint::decode_varint;
 use crate::encoding::{MaybeValue, Value, decode_value, markers, op_codes};
 use crate::schema::{DynTable, SchemaWithPK};
@@ -372,15 +374,31 @@ impl ParsedDiffSet {
 fn parse_as_changeset(
     data: &[u8],
 ) -> Result<DiffSet<ChangesetFormat, TableSchema<String>, String, Vec<u8>>, ParseError> {
-    let mut builder: DiffSetBuilder<ChangesetFormat, TableSchema<String>, String, Vec<u8>> =
-        DiffSetBuilder::new();
+    parse_as(data, FormatMarker::Changeset, parse_changeset_operation)
+}
+
+/// Parse every table of `data`, which must all be in the `expected` format, adding
+/// each operation with `parse_operation`.
+///
+/// # Errors
+///
+/// Returns a `ParseError` if the data is malformed or mixes formats.
+fn parse_as<F: Format<String, Vec<u8>>>(
+    data: &[u8],
+    expected: FormatMarker,
+    parse_operation: ParseOperation<F>,
+) -> Result<ParsedSet<F>, ParseError>
+where
+    ParsedSet<F>: From<ParsedBuilder<F>>,
+{
+    let mut builder = DiffSetBuilder::new();
     let mut pos = 0;
 
     while pos < data.len() {
         let (schema, format, header_len) = parse_table_header(&data[pos..], pos)?;
-        if format != FormatMarker::Changeset {
+        if format != expected {
             return Err(ParseError::MixedFormats {
-                expected: FormatMarker::Changeset,
+                expected,
                 found: format,
                 position: pos,
             });
@@ -392,7 +410,7 @@ fn parse_as_changeset(
             if byte == markers::CHANGESET || byte == markers::PATCHSET {
                 break;
             }
-            let op_len = parse_changeset_operation(&data[pos..], pos, &schema, &mut builder)?;
+            let op_len = parse_operation(&data[pos..], pos, &schema, &mut builder)?;
             pos += op_len;
         }
     }
@@ -408,32 +426,7 @@ fn parse_as_changeset(
 fn parse_as_patchset(
     data: &[u8],
 ) -> Result<DiffSet<PatchsetFormat, TableSchema<String>, String, Vec<u8>>, ParseError> {
-    let mut builder: DiffSetBuilder<PatchsetFormat, TableSchema<String>, String, Vec<u8>> =
-        DiffSetBuilder::new();
-    let mut pos = 0;
-
-    while pos < data.len() {
-        let (schema, format, header_len) = parse_table_header(&data[pos..], pos)?;
-        if format != FormatMarker::Patchset {
-            return Err(ParseError::MixedFormats {
-                expected: FormatMarker::Patchset,
-                found: format,
-                position: pos,
-            });
-        }
-        pos += header_len;
-
-        while pos < data.len() {
-            let byte = data[pos];
-            if byte == markers::CHANGESET || byte == markers::PATCHSET {
-                break;
-            }
-            let op_len = parse_patchset_operation(&data[pos..], pos, &schema, &mut builder)?;
-            pos += op_len;
-        }
-    }
-
-    Ok(builder.into())
+    parse_as(data, FormatMarker::Patchset, parse_patchset_operation)
 }
 
 /// Parse a table header and return the schema.
@@ -528,6 +521,48 @@ fn parse_operation_header(data: &[u8], base_pos: usize) -> Result<(u8, bool, usi
     Ok((data[0], data[1] != 0, 2))
 }
 
+/// A builder of parsed tables in format `F`.
+type ParsedBuilder<F> = DiffSetBuilder<F, TableSchema<String>, String, Vec<u8>>;
+
+/// A diff set of parsed tables in format `F`.
+type ParsedSet<F> = DiffSet<F, TableSchema<String>, String, Vec<u8>>;
+
+/// Parses one operation at a byte offset into the builder, returning its length.
+type ParseOperation<F> =
+    fn(&[u8], usize, &TableSchema<String>, &mut ParsedBuilder<F>) -> Result<usize, ParseError>;
+
+/// A full row image and the number of bytes it took.
+type ParsedRow = (Vec<Value<String, Vec<u8>>>, usize);
+
+/// Parse `count` values with undefined ones read as NULL, a full row image.
+fn parse_row(data: &[u8], base_pos: usize, count: usize) -> Result<ParsedRow, ParseError> {
+    let (values, len) = parse_values(data, base_pos, count)?;
+    Ok((
+        values
+            .into_iter()
+            .map(|v| v.unwrap_or(Value::Null))
+            .collect(),
+        len,
+    ))
+}
+
+/// Parse an INSERT body, which both formats store as a full row, into `builder`.
+fn parse_insert<F: Format<String, Vec<u8>>>(
+    data: &[u8],
+    base_pos: usize,
+    schema: &TableSchema<String>,
+    builder: &mut ParsedBuilder<F>,
+    indirect: bool,
+) -> Result<usize, ParseError>
+where
+    Operation<F, String, Vec<u8>>: core::ops::Add<Output = Option<Operation<F, String, Vec<u8>>>>,
+{
+    let (values, len) = parse_row(data, base_pos, schema.column_count)?;
+    let pk = schema.extract_pk(&values);
+    builder.add_operation(schema, pk, Operation::Insert { values, indirect });
+    Ok(len)
+}
+
 /// Parse a changeset operation.
 fn parse_changeset_operation(
     data: &[u8],
@@ -539,22 +574,11 @@ fn parse_changeset_operation(
 
     match op_code {
         op_codes::INSERT => {
-            let (values, len) = parse_values(&data[pos..], base_pos + pos, schema.column_count)?;
-            pos += len;
-            let values: Vec<Value<String, Vec<u8>>> = values
-                .into_iter()
-                .map(|v| v.unwrap_or(Value::Null))
-                .collect();
-            let pk = schema.extract_pk(&values);
-            builder.add_operation(schema, pk, Operation::Insert { values, indirect });
+            pos += parse_insert(&data[pos..], base_pos + pos, schema, builder, indirect)?;
         }
         op_codes::DELETE => {
-            let (values, len) = parse_values(&data[pos..], base_pos + pos, schema.column_count)?;
+            let (values, len) = parse_row(&data[pos..], base_pos + pos, schema.column_count)?;
             pos += len;
-            let values: Vec<Value<String, Vec<u8>>> = values
-                .into_iter()
-                .map(|v| v.unwrap_or(Value::Null))
-                .collect();
             let pk = schema.extract_pk(&values);
             builder.add_operation(
                 schema,
@@ -598,14 +622,7 @@ fn parse_patchset_operation(
 
     match op_code {
         op_codes::INSERT => {
-            let (values, len) = parse_values(&data[pos..], base_pos + pos, schema.column_count)?;
-            pos += len;
-            let values: Vec<Value<String, Vec<u8>>> = values
-                .into_iter()
-                .map(|v| v.unwrap_or(Value::Null))
-                .collect();
-            let pk = schema.extract_pk(&values);
-            builder.add_operation(schema, pk, Operation::Insert { values, indirect });
+            pos += parse_insert(&data[pos..], base_pos + pos, schema, builder, indirect)?;
         }
         op_codes::DELETE => {
             // Patchset DELETE: only PK values in column order
