@@ -19,7 +19,7 @@ permissions:
 jobs:
   asan:
     name: AddressSanitizer (memory + leaks)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       # Instrument the Rust code, and (via -Zbuild-std below) a freshly rebuilt
       # standard library, with AddressSanitizer. AddressSanitizer bundles
