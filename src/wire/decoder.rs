@@ -114,8 +114,22 @@ pub struct TimeDecoder;
 
 /// Decoder for `interval`, storing the ISO 8601 duration Postgres prints
 /// under `IntervalStyle = iso_8601`, such as `P1Y2M3DT4H5M6.789S`.
+///
+/// Text sources must carry the `postgres`-style text Postgres prints by
+/// default. Text in another `IntervalStyle` is refused with
+/// [`DecodeError::WrongPayloadKind`](super::DecodeError::WrongPayloadKind).
 #[derive(Debug, Clone, Copy, Default)]
-pub struct IntervalDecoder;
+pub struct IntervalIso8601Decoder;
+
+/// Decoder for `interval`, storing the text Postgres prints under its
+/// default `IntervalStyle = postgres`, such as
+/// `1 year 2 mons 3 days 04:05:06.789`, `00:15:00` or `-1 days +02:00:00`.
+///
+/// Text sources must carry that same `postgres`-style text. Text in
+/// another `IntervalStyle` is refused with
+/// [`DecodeError::WrongPayloadKind`](super::DecodeError::WrongPayloadKind).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct IntervalPostgresDecoder;
 
 /// Decoder for `json`/`jsonb`. Preserves the wire form verbatim as
 /// `Value::Text`.

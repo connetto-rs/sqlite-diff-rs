@@ -5,13 +5,13 @@ use alloc::vec::Vec;
 
 use super::decoder::{
     BoolDecoder, DateDecoder, DecimalMinorUnitsDecoder, DecimalTextDecoder, Decoder,
-    Int64OverflowToTextDecoder, IntDecoder, IntervalDecoder, JsonCanonicalDecoder,
-    JsonVerbatimDecoder, MySqlBinaryDecoder, NullDecoder, PgByteaBinaryDecoder,
-    PgByteaTextModeDecoder, RealDecoder, TextDecoder, TimeDecoder, TimestampDecoder,
-    TimestampTzDecoder, UuidBlob16Decoder, UuidText36Decoder,
+    Int64OverflowToTextDecoder, IntDecoder, IntervalIso8601Decoder, IntervalPostgresDecoder,
+    JsonCanonicalDecoder, JsonVerbatimDecoder, MySqlBinaryDecoder, NullDecoder,
+    PgByteaBinaryDecoder, PgByteaTextModeDecoder, RealDecoder, TextDecoder, TimeDecoder,
+    TimestampDecoder, TimestampTzDecoder, UuidBlob16Decoder, UuidText36Decoder,
 };
 use super::error::DecodeError;
-use super::temporal::{Temporal, decode_temporal_text, decode_utc_timestamptz_text};
+use super::temporal::{IntervalStyle, Temporal, decode_temporal_text, decode_utc_timestamptz_text};
 use super::type_map::{TypeMap, TypeMapDefaults};
 use super::wire_type::WireKind;
 use crate::encoding::Value;
@@ -237,7 +237,14 @@ where
     }
 }
 
-temporal_impl!(IntervalDecoder, Temporal::Interval);
+temporal_impl!(
+    IntervalIso8601Decoder,
+    Temporal::Interval(IntervalStyle::Iso8601)
+);
+temporal_impl!(
+    IntervalPostgresDecoder,
+    Temporal::Interval(IntervalStyle::Postgres)
+);
 
 // ------------------------------------------------------------------
 // JsonVerbatimDecoder / JsonCanonicalDecoder
@@ -287,7 +294,7 @@ where
             .with(WireKind::TimestampTz, TimestampTzDecoder)
             .with(WireKind::Date, DateDecoder)
             .with(WireKind::Time, TimeDecoder)
-            .with(WireKind::Interval, IntervalDecoder)
+            .with(WireKind::Interval, IntervalIso8601Decoder)
             .with(WireKind::Json, JsonVerbatimDecoder)
             .with(WireKind::Jsonb, JsonVerbatimDecoder)
     }

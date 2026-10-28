@@ -25,6 +25,16 @@ const PG_EPOCH_UNIX_DAYS: i64 = 10_957;
 const MAX_OFFSET_SECS: i64 = 16 * 3600 - 1;
 const UTC_SUFFIX: &str = "+00:00";
 
+/// Which text an `interval` is stored as, named for the Postgres
+/// `IntervalStyle` that prints it.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum IntervalStyle {
+    /// `P1Y2M3DT4H5M6.789S`.
+    Iso8601,
+    /// `1 year 2 mons 3 days 04:05:06.789`, Postgres's default.
+    Postgres,
+}
+
 /// Which temporal type a decoder renders.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Temporal {
@@ -33,7 +43,7 @@ pub(crate) enum Temporal {
     Time,
     Timestamp,
     TimestampTz,
-    Interval,
+    Interval(IntervalStyle),
 }
 
 impl Temporal {
@@ -43,7 +53,7 @@ impl Temporal {
             Temporal::Time => "time",
             Temporal::Timestamp => "timestamp",
             Temporal::TimestampTz => "timestamptz",
-            Temporal::Interval => "interval",
+            Temporal::Interval(_) => "interval",
         }
     }
 
@@ -53,7 +63,7 @@ impl Temporal {
             Temporal::Time => "time or timetz binary (8 or 12 bytes) within one day",
             Temporal::Timestamp => "timestamp binary (8 bytes)",
             Temporal::TimestampTz => "timestamptz binary (8 bytes)",
-            Temporal::Interval => "interval binary (16 bytes)",
+            Temporal::Interval(_) => "interval binary (16 bytes)",
         }
     }
 }
@@ -84,7 +94,7 @@ where
         Temporal::Time => time_from_binary(bytes),
         Temporal::Timestamp => timestamp_from_binary(bytes, false),
         Temporal::TimestampTz => timestamp_from_binary(bytes, true),
-        Temporal::Interval => interval_from_binary(bytes),
+        Temporal::Interval(style) => interval_from_binary(bytes, style),
     };
     match rendered {
         Ok(s) => Ok(Value::Text(S::from(s))),
@@ -187,51 +197,119 @@ fn render_timetz(micros: i64, offset_secs: i64) -> String {
     out
 }
 
-/// Append `value` and its ISO 8601 designator unless `value` is zero.
-fn push_part(out: &mut String, value: i64, unit: char) {
-    if value != 0 {
-        write!(out, "{value}{unit}").unwrap();
+/// Hours, minutes, seconds and microseconds of `time`, each carrying its
+/// sign.
+fn clock_parts(time: i64) -> (i64, i64, i64, i64) {
+    (
+        time / USECS_PER_HOUR,
+        time % USECS_PER_HOUR / USECS_PER_MINUTE,
+        time % USECS_PER_MINUTE / USECS_PER_SEC,
+        time % USECS_PER_SEC,
+    )
+}
+
+/// Append the magnitude of `secs`, zero-padded to `width`, and of `usecs`
+/// as a fraction without trailing zeros, as Postgres's `AppendSeconds`.
+fn push_seconds(out: &mut String, secs: i64, usecs: i64, width: usize) {
+    write!(out, "{:0width$}", secs.abs()).unwrap();
+    if usecs != 0 {
+        let frac_start = out.len() + 1;
+        write!(out, ".{:06}", usecs.abs()).unwrap();
+        let kept = out[frac_start..].trim_end_matches('0').len();
+        out.truncate(frac_start + kept);
     }
 }
 
-/// Postgres's `EncodeInterval` under `IntervalStyle = iso_8601`.
-fn render_interval(months: i32, days: i32, time: i64) -> Result<String, Failure> {
+/// Postgres's `EncodeInterval` under `style`.
+fn render_interval(
+    months: i32,
+    days: i32,
+    time: i64,
+    style: IntervalStyle,
+) -> Result<String, Failure> {
     let infinite = (months, days, time) == (i32::MAX, i32::MAX, i64::MAX)
         || (months, days, time) == (i32::MIN, i32::MIN, i64::MIN);
     if infinite {
         return Err(Failure::Unrepresentable);
     }
     let (years, months) = (months / 12, months % 12);
-    let hours = time / USECS_PER_HOUR;
-    let minutes = time % USECS_PER_HOUR / USECS_PER_MINUTE;
-    let secs = time % USECS_PER_MINUTE / USECS_PER_SEC;
-    let usecs = time % USECS_PER_SEC;
-    if years == 0 && months == 0 && days == 0 && time == 0 {
-        return Ok(String::from("PT0S"));
+    Ok(match style {
+        IntervalStyle::Iso8601 => render_iso8601_interval(years, months, days, time),
+        IntervalStyle::Postgres => render_postgres_interval(years, months, days, time),
+    })
+}
+
+/// Append `value` and its ISO 8601 designator unless `value` is zero.
+fn push_iso8601_part(out: &mut String, value: i64, unit: char) {
+    if value != 0 {
+        write!(out, "{value}{unit}").unwrap();
     }
+}
+
+fn render_iso8601_interval(years: i32, months: i32, days: i32, time: i64) -> String {
+    if years == 0 && months == 0 && days == 0 && time == 0 {
+        return String::from("PT0S");
+    }
+    let (hours, minutes, secs, usecs) = clock_parts(time);
     let mut out = String::from("P");
-    push_part(&mut out, i64::from(years), 'Y');
-    push_part(&mut out, i64::from(months), 'M');
-    push_part(&mut out, i64::from(days), 'D');
+    push_iso8601_part(&mut out, i64::from(years), 'Y');
+    push_iso8601_part(&mut out, i64::from(months), 'M');
+    push_iso8601_part(&mut out, i64::from(days), 'D');
     if time != 0 {
         out.push('T');
     }
-    push_part(&mut out, hours, 'H');
-    push_part(&mut out, minutes, 'M');
+    push_iso8601_part(&mut out, hours, 'H');
+    push_iso8601_part(&mut out, minutes, 'M');
     if secs != 0 || usecs != 0 {
         if secs < 0 || usecs < 0 {
             out.push('-');
         }
-        write!(out, "{}", secs.abs()).unwrap();
-        if usecs != 0 {
-            let frac_start = out.len() + 1;
-            write!(out, ".{:06}", usecs.abs()).unwrap();
-            let kept = out[frac_start..].trim_end_matches('0').len();
-            out.truncate(frac_start + kept);
-        }
+        push_seconds(&mut out, secs, usecs, 1);
         out.push('S');
     }
-    Ok(out)
+    out
+}
+
+/// Append a nonzero `value` and its unit, plural unless `value` is one, as
+/// Postgres's `AddPostgresIntPart`. A positive value after a negative one
+/// carries a `+`.
+fn push_postgres_part(out: &mut String, value: i32, unit: &str, after_negative: &mut bool) {
+    if value == 0 {
+        return;
+    }
+    if !out.is_empty() {
+        out.push(' ');
+    }
+    if *after_negative && value > 0 {
+        out.push('+');
+    }
+    write!(out, "{value} {unit}").unwrap();
+    if value != 1 {
+        out.push('s');
+    }
+    *after_negative = value < 0;
+}
+
+fn render_postgres_interval(years: i32, months: i32, days: i32, time: i64) -> String {
+    let mut out = String::new();
+    let mut after_negative = false;
+    push_postgres_part(&mut out, years, "year", &mut after_negative);
+    push_postgres_part(&mut out, months, "mon", &mut after_negative);
+    push_postgres_part(&mut out, days, "day", &mut after_negative);
+    if out.is_empty() || time != 0 {
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        if time < 0 {
+            out.push('-');
+        } else if after_negative {
+            out.push('+');
+        }
+        let (hours, minutes, secs, usecs) = clock_parts(time);
+        write!(out, "{:02}:{:02}:", hours.abs(), minutes.abs()).unwrap();
+        push_seconds(&mut out, secs, usecs, 2);
+    }
+    out
 }
 
 // ------------------------------------------------------------------
@@ -273,10 +351,10 @@ fn time_from_binary(bytes: &[u8]) -> Result<String, Failure> {
 }
 
 /// Microseconds, then days, then months.
-fn interval_from_binary(bytes: &[u8]) -> Result<String, Failure> {
+fn interval_from_binary(bytes: &[u8], style: IntervalStyle) -> Result<String, Failure> {
     let bytes: &[u8; 16] = bytes.try_into().map_err(|_| Failure::Malformed)?;
     let time = i64::from_be_bytes(bytes[..8].try_into().unwrap());
     let days = i32::from_be_bytes(bytes[8..12].try_into().unwrap());
     let months = i32::from_be_bytes(bytes[12..].try_into().unwrap());
-    render_interval(months, days, time)
+    render_interval(months, days, time, style)
 }

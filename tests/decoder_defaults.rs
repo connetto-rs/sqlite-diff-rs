@@ -269,7 +269,7 @@ fn pg_defaults_time_produces_text() {
 #[test]
 fn pg_defaults_interval_produces_text() {
     let types: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
-    // WireType::Interval -> IntervalDecoder
+    // WireType::Interval -> IntervalIso8601Decoder
     let val = types
         .decode(PgWalstreamColumn {
             column_name: "c",

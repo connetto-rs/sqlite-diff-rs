@@ -4,9 +4,9 @@
 use alloc::string::{String, ToString};
 
 use super::{
-    Failure, MAX_OFFSET_SECS, PG_EPOCH_UNIX_DAYS, Temporal, USECS_PER_DAY, USECS_PER_HOUR,
-    USECS_PER_MINUTE, USECS_PER_SEC, render_date, render_interval, render_time, render_timestamp,
-    render_timetz,
+    Failure, IntervalStyle, MAX_OFFSET_SECS, PG_EPOCH_UNIX_DAYS, Temporal, USECS_PER_DAY,
+    USECS_PER_HOUR, USECS_PER_MINUTE, USECS_PER_SEC, render_date, render_interval, render_time,
+    render_timestamp, render_timetz,
 };
 use crate::encoding::Value;
 use crate::wire::error::DecodeError;
@@ -31,7 +31,7 @@ where
         Temporal::Time => time_from_text(text),
         Temporal::Timestamp => timestamp_from_text(text),
         Temporal::TimestampTz => timestamptz_from_text(text),
-        Temporal::Interval => interval_from_text(text),
+        Temporal::Interval(style) => interval_from_text(text, style),
     };
     finish(column, kind, text, rendered)
 }
@@ -75,7 +75,7 @@ where
                 Temporal::Time => "ISO time or timetz text",
                 Temporal::Timestamp => "ISO timestamp text",
                 Temporal::TimestampTz => "ISO timestamptz text",
-                Temporal::Interval => "postgres-style interval text",
+                Temporal::Interval(_) => "postgres-style interval text",
             },
             actual: "malformed text",
         }),
@@ -253,8 +253,8 @@ fn timestamptz_from_text(text: &str) -> Result<String, Failure> {
 }
 
 /// Postgres's `EncodeInterval` output under `IntervalStyle = postgres`,
-/// such as `-1 years -2 mons +3 days -04:05:06.789`.
-fn interval_from_text(text: &str) -> Result<String, Failure> {
+/// such as `-1 years -2 mons +3 days -04:05:06.789`, rendered in `style`.
+fn interval_from_text(text: &str, style: IntervalStyle) -> Result<String, Failure> {
     if text == "infinity" || text == "-infinity" {
         return Err(Failure::Unrepresentable);
     }
@@ -291,7 +291,7 @@ fn interval_from_text(text: &str) -> Result<String, Failure> {
     }
     let months = i32::try_from(months).map_err(|_| Failure::Malformed)?;
     let days = i32::try_from(days).map_err(|_| Failure::Malformed)?;
-    render_interval(months, days, time)
+    render_interval(months, days, time, style)
 }
 
 /// Split a leading `+` or `-` from `text`.

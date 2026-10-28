@@ -59,10 +59,10 @@ pub use conversion_error::ConversionError;
 pub use decoder::Decoder;
 pub use decoder::{
     BoolDecoder, DateDecoder, DecimalMinorUnitsDecoder, DecimalTextDecoder,
-    Int64OverflowToTextDecoder, IntDecoder, IntervalDecoder, JsonCanonicalDecoder,
-    JsonVerbatimDecoder, MySqlBinaryDecoder, NullDecoder, PgByteaBinaryDecoder,
-    PgByteaTextModeDecoder, RealDecoder, TextDecoder, TimeDecoder, TimestampDecoder,
-    TimestampTzDecoder, UuidBlob16Decoder, UuidText36Decoder,
+    Int64OverflowToTextDecoder, IntDecoder, IntervalIso8601Decoder, IntervalPostgresDecoder,
+    JsonCanonicalDecoder, JsonVerbatimDecoder, MySqlBinaryDecoder, NullDecoder,
+    PgByteaBinaryDecoder, PgByteaTextModeDecoder, RealDecoder, TextDecoder, TimeDecoder,
+    TimestampDecoder, TimestampTzDecoder, UuidBlob16Decoder, UuidText36Decoder,
 };
 pub use error::DecodeError;
 #[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]

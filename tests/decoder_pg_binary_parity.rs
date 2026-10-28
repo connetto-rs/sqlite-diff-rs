@@ -22,8 +22,9 @@ use alloc::vec::Vec;
 use bytes::Bytes;
 use sqlite_diff_rs::pg_walstream::{ColumnValue, PgWalstream, PgWalstreamColumn};
 use sqlite_diff_rs::{
-    BoolDecoder, DecodeError, Decoder, IntDecoder, PgBinary, PgBinaryColumn, PgByteaBinaryDecoder,
-    RealDecoder, TextDecoder, TypeMap, UuidBlob16Decoder, Value, WireAdapter, WireType,
+    BoolDecoder, DecodeError, Decoder, IntDecoder, IntervalPostgresDecoder, PgBinary,
+    PgBinaryColumn, PgByteaBinaryDecoder, RealDecoder, TextDecoder, TypeMap, UuidBlob16Decoder,
+    Value, WireAdapter, WireKind, WireType,
 };
 
 const UUID_BYTES: [u8; 16] = [
@@ -141,60 +142,98 @@ fn uuid_parity_on_logical_value() {
 /// `(pgoutput text, binary send form as hex, replica text)`.
 type Fixture = (&'static str, &'static str, &'static str);
 
-/// Decode one value through `PgBinary`, pgoutput text and pgoutput binary.
-fn decode_all(
-    wire_type: WireType,
-    text: &str,
-    hex_bytes: &str,
-) -> [Result<Value<String, Vec<u8>>, DecodeError>; 3] {
-    let binary = Bytes::from(hex::decode(hex_bytes).unwrap());
-    let pg_binary: TypeMap<PgBinary, String, Vec<u8>> = TypeMap::defaults();
-    let walstream: TypeMap<PgWalstream, String, Vec<u8>> = TypeMap::defaults();
-    let snapshot = pg_binary.decode(PgBinaryColumn {
-        column_name: "c",
-        wire_type,
-        raw: Some(&binary),
-    });
-    let cdc_text = walstream.decode(PgWalstreamColumn {
-        column_name: "c",
-        wire_type,
-        data: &ColumnValue::text(text),
-    });
-    let cdc_binary = walstream.decode(PgWalstreamColumn {
-        column_name: "c",
-        wire_type,
-        data: &ColumnValue::Binary(binary),
-    });
-    [snapshot, cdc_text, cdc_binary]
+/// The `TypeMap` of each Postgres source a fixture is decoded through.
+struct Sources {
+    pg_binary: TypeMap<PgBinary, String, Vec<u8>>,
+    walstream: TypeMap<PgWalstream, String, Vec<u8>>,
+}
+
+impl Sources {
+    fn defaults() -> Self {
+        Self {
+            pg_binary: TypeMap::defaults(),
+            walstream: TypeMap::defaults(),
+        }
+    }
+
+    /// The defaults with `decoder` registered under `kind` on both sources.
+    fn with<D>(kind: WireKind, decoder: D) -> Self
+    where
+        D: Decoder<PgBinary, String, Vec<u8>>
+            + Decoder<PgWalstream, String, Vec<u8>>
+            + Copy
+            + Send
+            + Sync
+            + 'static,
+    {
+        Self {
+            pg_binary: TypeMap::defaults().with(kind, decoder),
+            walstream: TypeMap::defaults().with(kind, decoder),
+        }
+    }
+
+    /// Decode one value through `PgBinary`, pgoutput text and pgoutput binary.
+    fn decode_all(
+        &self,
+        wire_type: WireType,
+        text: &str,
+        hex_bytes: &str,
+    ) -> [Result<Value<String, Vec<u8>>, DecodeError>; 3] {
+        let binary = Bytes::from(hex::decode(hex_bytes).unwrap());
+        let snapshot = self.pg_binary.decode(PgBinaryColumn {
+            column_name: "c",
+            wire_type,
+            raw: Some(&binary),
+        });
+        let cdc_text = self.walstream.decode(PgWalstreamColumn {
+            column_name: "c",
+            wire_type,
+            data: &ColumnValue::text(text),
+        });
+        let cdc_binary = self.walstream.decode(PgWalstreamColumn {
+            column_name: "c",
+            wire_type,
+            data: &ColumnValue::Binary(binary),
+        });
+        [snapshot, cdc_text, cdc_binary]
+    }
+
+    fn assert_parity(&self, wire_type: WireType, fixtures: &[Fixture]) {
+        for &(text, hex_bytes, replica) in fixtures {
+            for (path, got) in ["PgBinary", "pgoutput text", "pgoutput binary"]
+                .into_iter()
+                .zip(self.decode_all(wire_type, text, hex_bytes))
+            {
+                assert_eq!(
+                    got,
+                    Ok(Value::Text(String::from(replica))),
+                    "{wire_type:?} {text:?} through {path}"
+                );
+            }
+        }
+    }
+
+    fn assert_unrepresentable(&self, wire_type: WireType, fixtures: &[(&str, &str)]) {
+        for &(text, hex_bytes) in fixtures {
+            for (path, got) in ["PgBinary", "pgoutput text", "pgoutput binary"]
+                .into_iter()
+                .zip(self.decode_all(wire_type, text, hex_bytes))
+            {
+                assert!(
+                    matches!(got, Err(DecodeError::UnrepresentableTemporal { ref column, .. }) if column == "c"),
+                    "{wire_type:?} {text:?} through {path} gave {got:?}"
+                );
+            }
+        }
+    }
 }
 
 fn assert_parity(wire_type: WireType, fixtures: &[Fixture]) {
-    for &(text, hex_bytes, replica) in fixtures {
-        for (path, got) in ["PgBinary", "pgoutput text", "pgoutput binary"]
-            .into_iter()
-            .zip(decode_all(wire_type, text, hex_bytes))
-        {
-            assert_eq!(
-                got,
-                Ok(Value::Text(String::from(replica))),
-                "{wire_type:?} {text:?} through {path}"
-            );
-        }
-    }
+    Sources::defaults().assert_parity(wire_type, fixtures);
 }
 
 fn assert_unrepresentable(wire_type: WireType, fixtures: &[(&str, &str)]) {
-    for &(text, hex_bytes) in fixtures {
-        for (path, got) in ["PgBinary", "pgoutput text", "pgoutput binary"]
-            .into_iter()
-            .zip(decode_all(wire_type, text, hex_bytes))
-        {
-            assert!(
-                matches!(got, Err(DecodeError::UnrepresentableTemporal { ref column, .. }) if column == "c"),
-                "{wire_type:?} {text:?} through {path} gave {got:?}"
-            );
-        }
-    }
+    Sources::defaults().assert_unrepresentable(wire_type, fixtures);
 }
 
 #[test]
@@ -385,64 +424,125 @@ fn timetz_is_utc_with_microseconds() {
     );
 }
 
+/// Postgres's `interval` text under `IntervalStyle = postgres`, its
+/// `interval_send` bytes, and its text under `IntervalStyle = iso_8601`.
+const INTERVALS: &[Fixture] = &[
+    (
+        "1 year 2 mons 3 days 04:05:06.789",
+        "000000036c97ca88000000030000000e",
+        "P1Y2M3DT4H5M6.789S",
+    ),
+    ("00:00:00", "00000000000000000000000000000000", "PT0S"),
+    ("00:15:00", "0000000035a4e9000000000000000000", "PT15M"),
+    ("1 day", "00000000000000000000000100000000", "P1D"),
+    (
+        "-1 years -2 mons",
+        "000000000000000000000000fffffff2",
+        "P-1Y-2M",
+    ),
+    (
+        "1 day -01:00:00",
+        "ffffffff296c5c000000000100000000",
+        "P1DT-1H",
+    ),
+    (
+        "-1 days +02:03:00",
+        "00000001b7e1dd00ffffffff00000000",
+        "P-1DT2H3M",
+    ),
+    (
+        "-1 years +2 days 03:00:00",
+        "0000000283baec0000000002fffffff4",
+        "P-1Y2DT3H",
+    ),
+    (
+        "1 year -2 days",
+        "0000000000000000fffffffe0000000c",
+        "P1Y-2D",
+    ),
+    (
+        "-1 mons +1 day -00:00:01",
+        "fffffffffff0bdc000000001ffffffff",
+        "P-1M1DT-1S",
+    ),
+    (
+        "-1 mons -1 days",
+        "0000000000000000ffffffffffffffff",
+        "P-1M-1D",
+    ),
+    (
+        "100000:00:00",
+        "0001476b081e80000000000000000000",
+        "PT100000H",
+    ),
+    ("26:00:00", "00000015cafea8000000000000000000", "PT26H"),
+    (
+        "00:00:00.000001",
+        "00000000000000010000000000000000",
+        "PT0.000001S",
+    ),
+    ("-00:00:05.5", "ffffffffffac13a00000000000000000", "PT-5.5S"),
+    ("-00:00:00.5", "fffffffffff85ee00000000000000000", "PT-0.5S"),
+    ("1 mon", "00000000000000000000000000000001", "P1M"),
+    ("2 mons", "00000000000000000000000000000002", "P2M"),
+    ("1 year", "0000000000000000000000000000000c", "P1Y"),
+    ("-1 years", "000000000000000000000000fffffff4", "P-1Y"),
+    ("1 year 1 mon", "0000000000000000000000000000000d", "P1Y1M"),
+    (
+        "1 year 1 mon 1 day 00:00:01",
+        "00000000000f4240000000010000000d",
+        "P1Y1M1DT1S",
+    ),
+    ("-3 days", "0000000000000000fffffffd00000000", "P-3D"),
+    ("00:01:00", "00000000039387000000000000000000", "PT1M"),
+    ("-00:30:00", "ffffffff94b62e000000000000000000", "PT-30M"),
+    (
+        "-1 years -2 mons -3 days -04:05:06.789",
+        "fffffffc93683578fffffffdfffffff2",
+        "P-1Y-2M-3DT-4H-5M-6.789S",
+    ),
+    (
+        "178000000 years",
+        "0000000000000000000000007f50c600",
+        "P178000000Y",
+    ),
+    (
+        "2147483647 days 2562047788:00:54.775807",
+        "7fffffffffffffff7fffffff00000000",
+        "P2147483647DT2562047788H54.775807S",
+    ),
+    (
+        "-2147483647 days -2562047788:00:54.775807",
+        "80000000000000018000000100000000",
+        "P-2147483647DT-2562047788H-54.775807S",
+    ),
+];
+
+const INFINITE_INTERVALS: &[(&str, &str)] = &[
+    ("infinity", "7fffffffffffffff7fffffff7fffffff"),
+    ("-infinity", "80000000000000008000000080000000"),
+];
+
 #[test]
-fn interval_is_iso_8601_duration() {
-    assert_parity(
-        WireType::Interval,
-        &[
-            (
-                "1 year 2 mons 3 days 04:05:06.789",
-                "000000036c97ca88000000030000000e",
-                "P1Y2M3DT4H5M6.789S",
-            ),
-            ("00:00:00", "00000000000000000000000000000000", "PT0S"),
-            (
-                "-1 years -2 mons",
-                "000000000000000000000000fffffff2",
-                "P-1Y-2M",
-            ),
-            (
-                "1 day -01:00:00",
-                "ffffffff296c5c000000000100000000",
-                "P1DT-1H",
-            ),
-            (
-                "-1 days +02:03:00",
-                "00000001b7e1dd00ffffffff00000000",
-                "P-1DT2H3M",
-            ),
-            (
-                "100000:00:00",
-                "0001476b081e80000000000000000000",
-                "PT100000H",
-            ),
-            (
-                "00:00:00.000001",
-                "00000000000000010000000000000000",
-                "PT0.000001S",
-            ),
-            ("-00:00:05.5", "ffffffffffac13a00000000000000000", "PT-5.5S"),
-            ("-00:00:00.5", "fffffffffff85ee00000000000000000", "PT-0.5S"),
-            ("1 mon", "00000000000000000000000000000001", "P1M"),
-            ("1 year 1 mon", "0000000000000000000000000000000d", "P1Y1M"),
-            ("-3 days", "0000000000000000fffffffd00000000", "P-3D"),
-            ("00:01:00", "00000000039387000000000000000000", "PT1M"),
-            ("-00:30:00", "ffffffff94b62e000000000000000000", "PT-30M"),
-            (
-                "-1 years -2 mons -3 days -04:05:06.789",
-                "fffffffc93683578fffffffdfffffff2",
-                "P-1Y-2M-3DT-4H-5M-6.789S",
-            ),
-        ],
-    );
+fn interval_by_default_is_iso_8601_duration() {
+    assert_parity(WireType::Interval, INTERVALS);
+}
+
+#[test]
+fn interval_postgres_decoder_stores_postgres_text() {
+    let fixtures: Vec<Fixture> = INTERVALS
+        .iter()
+        .map(|&(text, hex_bytes, _)| (text, hex_bytes, text))
+        .collect();
+    Sources::with(WireKind::Interval, IntervalPostgresDecoder)
+        .assert_parity(WireType::Interval, &fixtures);
 }
 
 #[test]
 fn infinite_interval_is_refused() {
-    assert_unrepresentable(
-        WireType::Interval,
-        &[("infinity", "7fffffffffffffff7fffffff7fffffff")],
-    );
+    assert_unrepresentable(WireType::Interval, INFINITE_INTERVALS);
+    Sources::with(WireKind::Interval, IntervalPostgresDecoder)
+        .assert_unrepresentable(WireType::Interval, INFINITE_INTERVALS);
 }
 
 #[test]
