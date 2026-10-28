@@ -27,9 +27,6 @@ jobs:
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@be39649afda95dbf70f87cce95f68b8d5797b296 # nightly
 
-      - name: Cache cargo registry and build
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-
       - name: Verify version matches tag
         run: |
           VERSION=$(cargo metadata --no-deps --format-version=1 | jq -r '.packages[] | select(.name == "sqlite-diff-rs") | .version')
@@ -55,9 +52,6 @@ jobs:
 
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@be39649afda95dbf70f87cce95f68b8d5797b296 # nightly
-
-      - name: Cache cargo registry and build
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Authenticate with crates.io via OIDC
         uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1
