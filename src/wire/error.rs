@@ -115,6 +115,16 @@ pub enum DecodeError {
         scale: u32,
     },
 
+    /// Array that JSON array text cannot hold, which is one with a lower
+    /// bound other than 1 or with an element decoding to a `Blob`.
+    #[error("column {column:?} carried an array with {reason}, which JSON cannot hold")]
+    UnrepresentableArray {
+        /// Offending column name.
+        column: String,
+        /// What JSON cannot hold.
+        reason: &'static str,
+    },
+
     /// Free-form failure emitted by user-supplied decoders.
     #[error("column {column:?}: {message}")]
     Custom {

@@ -8,8 +8,8 @@
 /// [`WireColumnTypes`](super::WireColumnTypes)) and every payload carries
 /// it. [`TypeMap`](super::TypeMap) dispatches on its [`WireKind`], so a
 /// variant's parameters, such as [`ScaledDecimal`](Self::ScaledDecimal)'s
-/// scale, reach the decoder through the payload while one registration
-/// serves every value of them.
+/// scale or [`Array`](Self::Array)'s element type, reach the decoder
+/// through the payload while one registration serves every value of them.
 ///
 /// The set covers every decoder the crate ships. `Json` and `Jsonb`
 /// stay distinct so a downstream that treats them differently can
@@ -57,6 +57,71 @@ pub enum WireType {
     Json,
     /// Binary JSON (`jsonb`).
     Jsonb,
+    /// PostgreSQL array of one or more dimensions, held as JSON array text
+    /// such as `[1,2]` for `{1,2}`, every element stored the way a scalar
+    /// column of its type is.
+    Array {
+        /// Type of every element.
+        element: ArrayElement,
+    },
+}
+
+/// Element type of a [`WireType::Array`], one of the [`WireType`]s
+/// without parameters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ArrayElement {
+    /// [`WireType::Bool`].
+    Bool,
+    /// [`WireType::Int`].
+    Int,
+    /// [`WireType::Real`].
+    Real,
+    /// [`WireType::Text`].
+    Text,
+    /// [`WireType::Bytes`].
+    Bytes,
+    /// [`WireType::Uuid`].
+    Uuid,
+    /// [`WireType::Decimal`].
+    Decimal,
+    /// [`WireType::Timestamp`].
+    Timestamp,
+    /// [`WireType::TimestampTz`].
+    TimestampTz,
+    /// [`WireType::Date`].
+    Date,
+    /// [`WireType::Time`].
+    Time,
+    /// [`WireType::Interval`].
+    Interval,
+    /// [`WireType::Json`].
+    Json,
+    /// [`WireType::Jsonb`].
+    Jsonb,
+}
+
+impl ArrayElement {
+    /// The [`WireType`] each element decodes as.
+    #[must_use]
+    pub const fn wire_type(self) -> WireType {
+        match self {
+            Self::Bool => WireType::Bool,
+            Self::Int => WireType::Int,
+            Self::Real => WireType::Real,
+            Self::Text => WireType::Text,
+            Self::Bytes => WireType::Bytes,
+            Self::Uuid => WireType::Uuid,
+            Self::Decimal => WireType::Decimal,
+            Self::Timestamp => WireType::Timestamp,
+            Self::TimestampTz => WireType::TimestampTz,
+            Self::Date => WireType::Date,
+            Self::Time => WireType::Time,
+            Self::Interval => WireType::Interval,
+            Self::Json => WireType::Json,
+            Self::Jsonb => WireType::Jsonb,
+        }
+    }
 }
 
 impl WireType {
@@ -79,6 +144,7 @@ impl WireType {
             Self::Interval => WireKind::Interval,
             Self::Json => WireKind::Json,
             Self::Jsonb => WireKind::Jsonb,
+            Self::Array { .. } => WireKind::Array,
         }
     }
 }
@@ -87,7 +153,9 @@ impl WireType {
 /// [`TypeMap`](super::TypeMap) registers decoders under.
 ///
 /// Every [`WireType::ScaledDecimal`] maps to [`WireKind::ScaledDecimal`]
-/// whatever its scale, and the decoder reads the scale from the payload.
+/// whatever its scale, and every [`WireType::Array`] to [`WireKind::Array`]
+/// whatever its element type. The decoder reads the parameter from the
+/// payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum WireKind {
@@ -121,4 +189,6 @@ pub enum WireKind {
     Json,
     /// [`WireType::Jsonb`].
     Jsonb,
+    /// [`WireType::Array`] of any element type.
+    Array,
 }

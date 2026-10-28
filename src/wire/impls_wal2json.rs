@@ -1,19 +1,22 @@
 //! `Decoder` implementations and `TypeMapDefaults` for the `Wal2Json` source.
 
+use alloc::borrow::Cow;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
+use super::adapter::WireAdapter;
+use super::array::{decode_text_array, payload_element};
 use super::decoder::{
-    BoolDecoder, DateDecoder, DecimalMinorUnitsDecoder, DecimalTextDecoder, Decoder,
-    Int64OverflowToTextDecoder, IntDecoder, IntervalIso8601Decoder, IntervalPostgresDecoder,
-    JsonCanonicalDecoder, JsonVerbatimDecoder, MySqlBinaryDecoder, NullDecoder,
-    PgByteaBinaryDecoder, PgByteaTextModeDecoder, RealDecoder, TextDecoder, TimeDecoder,
-    TimestampDecoder, TimestampTzDecoder, UuidBlob16Decoder, UuidText36Decoder,
+    ArrayJsonDecoder, BoolDecoder, DateDecoder, DecimalMinorUnitsDecoder, DecimalTextDecoder,
+    Decoder, Int64OverflowToTextDecoder, IntDecoder, IntervalIso8601Decoder,
+    IntervalPostgresDecoder, JsonCanonicalDecoder, JsonVerbatimDecoder, MySqlBinaryDecoder,
+    NullDecoder, PgByteaBinaryDecoder, PgByteaTextModeDecoder, RealDecoder, TextDecoder,
+    TimeDecoder, TimestampDecoder, TimestampTzDecoder, UuidBlob16Decoder, UuidText36Decoder,
 };
 use super::error::DecodeError;
 use super::temporal::{IntervalStyle, Temporal, decode_temporal_text};
 use super::type_map::{TypeMap, TypeMapDefaults};
-use super::wire_type::WireKind;
+use super::wire_type::{ArrayElement, WireKind};
 use crate::encoding::Value;
 use crate::wal2json::{Wal2Json, Wal2JsonColumn};
 
@@ -209,6 +212,60 @@ impl<S, B> Decoder<Wal2Json, S, B> for DecimalMinorUnitsDecoder {
     }
 }
 
+impl<S, B> Decoder<Wal2Json, S, B> for ArrayJsonDecoder
+where
+    S: From<alloc::string::String> + AsRef<str>,
+    B: From<Vec<u8>>,
+{
+    fn decode(&self, payload: Wal2JsonColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        self.decode_within(payload, &Wal2Json::defaults())
+    }
+
+    fn decode_within(
+        &self,
+        payload: Wal2JsonColumn<'_>,
+        adapter: &dyn WireAdapter<Wal2Json, S, B>,
+    ) -> Result<Value<S, B>, DecodeError> {
+        let element = payload_element(payload.column_name, payload.wire_type)?;
+        super::json_decoders::decode_json_str_with(&payload, |text| {
+            decode_text_array(payload.column_name, text, |text| {
+                adapter.decode(Wal2JsonColumn {
+                    column_name: payload.column_name,
+                    wire_type: element.wire_type(),
+                    value: &scalar_json(element, text),
+                })
+            })
+        })
+    }
+}
+
+/// The JSON wal2json writes for a scalar column of `element`'s type whose
+/// text output is `text`: a boolean as `true` or `false`, a number bare
+/// unless it is `NaN` or an infinity, which become `null`, and anything else
+/// as a string.
+fn scalar_json(element: ArrayElement, text: Cow<'_, str>) -> serde_json::Value {
+    let starts_with = |prefix: &str| {
+        text.get(..prefix.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+    };
+    match element {
+        ArrayElement::Bool if text == "t" => serde_json::Value::Bool(true),
+        ArrayElement::Bool if text == "f" => serde_json::Value::Bool(false),
+        ArrayElement::Int | ArrayElement::Real | ArrayElement::Decimal
+            if ["NaN", "Infinity", "-Infinity"]
+                .into_iter()
+                .any(starts_with) =>
+        {
+            serde_json::Value::Null
+        }
+        ArrayElement::Int | ArrayElement::Real | ArrayElement::Decimal => text.parse().map_or_else(
+            |_| serde_json::Value::String(text.into_owned()),
+            serde_json::Value::Number,
+        ),
+        _ => serde_json::Value::String(text.into_owned()),
+    }
+}
+
 macro_rules! temporal_impl {
     ($decoder:ty, $kind:expr) => {
         impl<S, B> Decoder<Wal2Json, S, B> for $decoder
@@ -272,7 +329,7 @@ not_yet_impl!(MySqlBinaryDecoder);
 
 impl<S, B> TypeMapDefaults<S, B> for Wal2Json
 where
-    S: From<alloc::string::String>,
+    S: From<alloc::string::String> + AsRef<str>,
     B: From<Vec<u8>>,
 {
     fn defaults() -> TypeMap<Self, S, B> {
@@ -292,5 +349,6 @@ where
             .with(WireKind::Interval, IntervalIso8601Decoder)
             .with(WireKind::Json, JsonVerbatimDecoder)
             .with(WireKind::Jsonb, JsonVerbatimDecoder)
+            .with(WireKind::Array, ArrayJsonDecoder)
     }
 }
