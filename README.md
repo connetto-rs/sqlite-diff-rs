@@ -93,7 +93,7 @@ let bytes: Vec<u8> = patchset.build();
 # Ok::<_, ConversionError>(())
 ```
 
-The schema type implements `WireSchema` and its tables implement `WireColumnTypes`, declaring each column's semantic `WireType`. `TypeMap::defaults()` ships with mappings for bool, integers, reals, text, bytea, UUID, decimals as text or as integer minor units at a declared scale, temporals, JSON, and PostgreSQL arrays as JSON array text.
+The schema type implements `WireSchema` and its tables implement `WireColumnTypes`, declaring each column's semantic `WireType`. `TypeMap::defaults()` ships with mappings for bool, integers, reals, text, bytea, UUID, decimals as text or as integer minor units at a declared scale, temporals, JSON, PostgreSQL arrays as JSON array text, and pgvector vectors as sqlite-vec float32 blobs.
 
 ## Features
 

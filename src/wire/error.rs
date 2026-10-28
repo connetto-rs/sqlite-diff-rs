@@ -133,4 +133,16 @@ pub enum DecodeError {
         /// Failure message from the decoder.
         message: String,
     },
+
+    /// Vector whose element count differs from the dimension the column
+    /// declares.
+    #[error("column {column:?} carried a vector of {actual} elements, expected {expected}")]
+    VectorDimensionMismatch {
+        /// Offending column name.
+        column: String,
+        /// The dimension the column declares.
+        expected: u32,
+        /// The number of elements the value carried.
+        actual: usize,
+    },
 }

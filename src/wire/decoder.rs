@@ -183,3 +183,17 @@ pub struct JsonCanonicalDecoder;
 /// [`DecodeError::WrongPayloadKind`](super::DecodeError::WrongPayloadKind).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ArrayJsonDecoder;
+
+/// Decoder for [`WireType::Vector`](super::WireType::Vector) columns,
+/// storing a pgvector `vector` from its text `[1,2,3]` or its binary
+/// `vector_send` form as sqlite-vec's float32 `BLOB`, the elements as
+/// little-endian IEEE 754 `f32` with no header.
+///
+/// A value whose element count differs from the dimension the payload's
+/// wire type declares is refused with
+/// [`DecodeError::VectorDimensionMismatch`](super::DecodeError::VectorDimensionMismatch).
+/// Input pgvector would not produce, a non-finite element included, is
+/// refused with
+/// [`DecodeError::WrongPayloadKind`](super::DecodeError::WrongPayloadKind).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct VectorFloat32Decoder;

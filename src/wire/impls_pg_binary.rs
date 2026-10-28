@@ -16,7 +16,7 @@ use super::decoder::{
     ArrayJsonDecoder, BoolDecoder, DateDecoder, DecimalMinorUnitsDecoder, DecimalTextDecoder,
     Decoder, IntDecoder, IntervalIso8601Decoder, IntervalPostgresDecoder, JsonVerbatimDecoder,
     NullDecoder, PgByteaBinaryDecoder, RealDecoder, TextDecoder, TimeDecoder, TimestampDecoder,
-    TimestampTzDecoder, UuidBlob16Decoder,
+    TimestampTzDecoder, UuidBlob16Decoder, VectorFloat32Decoder,
 };
 use super::error::DecodeError;
 use super::minor_units::{decode_pg_numeric_binary_minor_units, payload_scale};
@@ -27,6 +27,7 @@ use super::scalar_helpers::{
 use super::source::{PgBinary, PgBinaryColumn};
 use super::temporal::{IntervalStyle, Temporal, decode_temporal_binary};
 use super::type_map::{TypeMap, TypeMapDefaults};
+use super::vector::{decode_pgvector_binary, payload_dimensions};
 use super::wire_type::WireKind;
 use crate::encoding::Value;
 
@@ -188,6 +189,19 @@ where
     }
 }
 
+impl<S, B> Decoder<PgBinary, S, B> for VectorFloat32Decoder
+where
+    B: From<Vec<u8>>,
+{
+    fn decode(&self, payload: PgBinaryColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        let dimensions = payload_dimensions(payload.column_name, payload.wire_type)?;
+        match payload.raw {
+            None => Ok(Value::Null),
+            Some(bytes) => decode_pgvector_binary(payload.column_name, bytes, dimensions),
+        }
+    }
+}
+
 impl<S, B> Decoder<PgBinary, S, B> for JsonVerbatimDecoder
 where
     S: From<String>,
@@ -252,5 +266,6 @@ where
             .with(WireKind::Json, JsonVerbatimDecoder)
             .with(WireKind::Jsonb, JsonVerbatimDecoder)
             .with(WireKind::Array, ArrayJsonDecoder)
+            .with(WireKind::Vector, VectorFloat32Decoder)
     }
 }

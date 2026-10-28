@@ -49,7 +49,7 @@ pub use wire::{
     MySqlBinaryDecoder, NullDecoder, PgBinary, PgBinaryColumn, PgByteaBinaryDecoder,
     PgByteaTextModeDecoder, RealDecoder, TextDecoder, TimeDecoder, TimestampDecoder,
     TimestampTzDecoder, TypeMap, TypeMapDefaults, UuidBlob16Decoder, UuidText36Decoder,
-    WireAdapter, WireColumnTypes, WireKind, WireSchema, WireSource, WireType,
+    VectorFloat32Decoder, WireAdapter, WireColumnTypes, WireKind, WireSchema, WireSource, WireType,
 };
 
 // Type aliases for common use cases

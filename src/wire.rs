@@ -44,6 +44,7 @@ mod temporal;
 mod type_map;
 #[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]
 mod uuid_helpers;
+mod vector;
 mod wire_type;
 
 #[cfg(feature = "maxwell")]
@@ -64,6 +65,7 @@ pub use decoder::{
     JsonCanonicalDecoder, JsonVerbatimDecoder, MySqlBinaryDecoder, NullDecoder,
     PgByteaBinaryDecoder, PgByteaTextModeDecoder, RealDecoder, TextDecoder, TimeDecoder,
     TimestampDecoder, TimestampTzDecoder, UuidBlob16Decoder, UuidText36Decoder,
+    VectorFloat32Decoder,
 };
 pub use error::DecodeError;
 #[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]
