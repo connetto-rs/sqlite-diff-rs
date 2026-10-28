@@ -341,6 +341,17 @@ mod tests {
     }
 
     #[test]
+    fn test_changeset_update_set_old_out_of_bounds() {
+        let err = Update::<_, ChangesetFormat, String, Vec<u8>>::from(users())
+            .set_old(2, 1i64)
+            .unwrap_err();
+        assert!(
+            matches!(err, Error::ColumnIndexOutOfBounds(2, 2)),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
     fn test_changeset_update_set_new_out_of_bounds() {
         let err = Update::<_, ChangesetFormat, String, Vec<u8>>::from(users())
             .set_new(7, "x")

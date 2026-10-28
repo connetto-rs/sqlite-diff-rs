@@ -290,8 +290,11 @@ fn reverse_keeps_the_key_in_the_old_record() {
         let ParsedDiffSet::Changeset(parsed) = ParsedDiffSet::parse(&changeset).unwrap() else {
             unreachable!()
         };
-        let reversed: Vec<u8> = DiffSetBuilder::from(parsed).reverse().build();
-        assert_eq!(reversed, sqlite_invert(&changeset));
+        let expected = sqlite_invert(&changeset);
+        let in_order: Vec<u8> = parsed.clone().reverse().into();
+        assert_eq!(in_order, expected);
+        let rebuilt: Vec<u8> = DiffSetBuilder::from(parsed).reverse().build();
+        assert_eq!(rebuilt, expected);
     }
 }
 
