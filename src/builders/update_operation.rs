@@ -160,7 +160,7 @@ impl<T: DynTable, S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>>
     /// // UPDATE users SET name = 'Bob' WHERE id = 1
     /// // We know id=1 (PK, unchanged) and name='Bob' (new), but not the old name
     /// let update = Update::<_, ChangesetFormat, String, Vec<u8>>::from(schema)
-    ///     .set(0, 1i64, 1i64).unwrap()      // PK: old=1, new=1 (unchanged)
+    ///     .set_old(0, 1i64).unwrap()        // PK: old=1, new=undefined (unchanged)
     ///     .set_new(1, "Bob").unwrap();      // name: old=undefined, new="Bob"
     /// ```
     pub fn set_new(
@@ -176,6 +176,50 @@ impl<T: DynTable, S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>>
         }
 
         self.values[col_idx] = (None, Some(new.into()));
+        Ok(self)
+    }
+
+    /// Sets only the old value for a column, leaving new as undefined.
+    ///
+    /// SQLite's session records an UPDATE with each primary key column defined in the old
+    /// record and undefined in the new one, which is what this setter writes for a key column.
+    ///
+    /// # Arguments
+    ///
+    /// * `col_idx` - The index of the column to set.
+    /// * `old` - The old value for the column.
+    ///
+    /// # Errors
+    ///
+    /// * `ColumnIndexOutOfBounds` - If the column index is out of bounds.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use sqlite_diff_rs::{ChangeSet, DiffOps, Update, ChangesetFormat, TableSchema};
+    ///
+    /// // CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)
+    /// let schema: TableSchema<String> = TableSchema::new("users".into(), 2, vec![1, 0]);
+    ///
+    /// // UPDATE users SET name = 'Bob' WHERE id = 1, as SQLite's session records it
+    /// let update = Update::<_, ChangesetFormat, String, Vec<u8>>::from(schema)
+    ///     .set_old(0, 1i64).unwrap()
+    ///     .set(1, "Alice", "Bob").unwrap();
+    /// let bytes = ChangeSet::new().update(update).build();
+    /// ```
+    pub fn set_old(
+        mut self,
+        col_idx: usize,
+        old: impl Into<Value<S, B>>,
+    ) -> Result<Self, crate::errors::Error> {
+        if col_idx >= self.values.len() {
+            return Err(crate::errors::Error::ColumnIndexOutOfBounds(
+                col_idx,
+                self.values.len(),
+            ));
+        }
+
+        self.values[col_idx] = (Some(old.into()), None);
         Ok(self)
     }
 

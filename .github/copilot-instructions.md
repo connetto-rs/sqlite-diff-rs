@@ -53,10 +53,10 @@ The project enforces **clippy::pedantic** at deny level. Key lint overrides
    buckets 0‥n−1) is load-bearing. Do not refactor it without differential
    fuzzing confirmation.
 
-3. **Consolidation rules**: The `Operation + Operation` impls in
-   `builders/operation.rs` match SQLite's `sqlite3changegroup_add()`. See the
-   consolidation table in Section B4. Changing these requires updating both
-   the changeset *and* patchset `impl Add` blocks.
+3. **Consolidation rules**: `Operation::merge` in `builders/operation.rs`, one
+   per format and reached through `Format::merge`, matches SQLite's
+   `sqlite3changeset_concat()`. See the consolidation table in Section B4.
+   `tests/concat_parity.rs` compares both formats with SQLite byte for byte.
 
 4. **NaN → Null, −0.0 kept**: SQLite never stores NaN, so encoding, decoding
    and the wire `RealDecoder`s map it to Null (fuzz regression #2). `-0.0`
@@ -267,11 +267,11 @@ Concrete implementors:
 | `format.rs` | `ChangesetFormat` | `TABLE_MARKER = b'T'`, `Old = MaybeValue`, `DeleteData = Vec<Value>` |
 | `format.rs` | `PatchsetFormat` | `TABLE_MARKER = b'P'`, `Old = ()`, `DeleteData = ()` |
 | `operation.rs` | `Operation<F, S, B>` | Schema-less enum: `Insert(Vec<Value>)`, `Delete(F::DeleteData)`, `Update(Vec<(F::Old, MaybeValue)>)` |
-| `operation.rs` | `Reverse` trait | `reverse()` method — only implemented for `ChangesetFormat` operations |
-| `operation.rs` | `impl Add` | Consolidation rules (Op + Op → Option<Op>) for both formats |
+| `operation.rs` | `Reverse` trait | `reverse()` on changeset builders, via `Operation::invert`, which matches `sqlite3changeset_invert()` |
+| `operation.rs` | `Operation::merge` | Consolidation rules (op, op, table → Option<op>) for both formats |
 | `insert_operation.rs` | `Insert<T, S, B>` | Builder: `From<T>`, `.set(col, value)` chain |
 | `delete_operation.rs` | `ChangeDelete<T, S, B>` | Changeset delete builder: `.set(col, value)` chain |
-| `update_operation.rs` | `Update<T, F, S, B>` | Update builder: `.set(col, old, new)` for changeset, `.set(col, new)` for patchset |
+| `update_operation.rs` | `Update<T, F, S, B>` | Update builder: `.set(col, old, new)`, `.set_old(col, old)` and `.set_new(col, new)` for changeset, `.set(col, new)` for patchset |
 | `change.rs` | `DiffSetBuilder<F, T, S, B>` | **Core builder** — `insert()`, `delete()`, `update()`, `build()`, `digest_sql()` |
 
 #### `DiffSetBuilder` internals
@@ -286,7 +286,7 @@ struct DiffSetBuilder<F: Format<S, B>, T: SchemaWithPK, S, B> {
 - Inner `IndexMap<Vec<Value<S, B>>, Operation<F, S, B>>` — rows keyed by PK values
 
 **Consolidation** (`add_operation`): When a new operation targets an existing PK,
-the library applies SQLite's `sqlite3changegroup_add()` rules via `Operation::add()`:
+the library applies SQLite's `sqlite3changeset_concat()` rules via `Format::merge`:
 
 | Existing | New | Result |
 |----------|-----|--------|
@@ -294,9 +294,9 @@ the library applies SQLite's `sqlite3changegroup_add()` rules via `Operation::ad
 | INSERT | UPDATE | INSERT with updated values |
 | INSERT | DELETE | Remove both (no-op) |
 | UPDATE | INSERT | Keep update |
-| UPDATE | UPDATE | Single UPDATE original→final |
-| UPDATE | DELETE | DELETE of original |
-| DELETE | INSERT | UPDATE if different, no-op if same |
+| UPDATE | UPDATE | Per column the first defined old and last defined new value. A non-key column left equal becomes undefined, and the UPDATE is dropped when nothing changes |
+| UPDATE | DELETE | DELETE of the update's old values, the delete's where undefined |
+| DELETE | INSERT | UPDATE of the differing columns, key in the old record only, no-op if same |
 | DELETE | UPDATE | Keep delete |
 | DELETE | DELETE | Keep first |
 

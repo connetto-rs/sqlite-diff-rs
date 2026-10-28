@@ -538,7 +538,6 @@ impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]>
     where
         S: Clone,
         B: Clone,
-        Operation<F, S, B>: core::ops::Add<Output = Option<Operation<F, S, B>>>,
     {
         let rows = self.ensure_table(table);
 
@@ -551,7 +550,7 @@ impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]>
                 match (&existing, &new_op) {
                     (Operation::Insert { .. }, Operation::Update { .. }) => {
                         // Apply update to insert values, then re-extract PK
-                        if let Some(combined) = existing + new_op
+                        if let Some(combined) = F::merge(existing, new_op, table)
                             && let Operation::Insert { values, .. } = &combined
                         {
                             let new_pk = table.extract_pk(values);
@@ -563,7 +562,7 @@ impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]>
                     }
                     _ => {
                         // Standard consolidation
-                        if let Some(combined) = existing + new_op {
+                        if let Some(combined) = F::merge(existing, new_op, table) {
                             // Re-insert at original position to preserve row ordering
                             rows.shift_insert(original_index, pk, combined);
                         }
@@ -580,7 +579,6 @@ impl<F: Format<S, B>, T: SchemaWithPK, S: AsRef<str> + Hash + Eq, B: AsRef<[u8]>
     where
         S: Clone,
         B: Clone,
-        Operation<F, S, B>: core::ops::Add<Output = Option<Operation<F, S, B>>>,
     {
         let pk = insert.extract_pk();
         let table = insert.as_ref().clone();
@@ -979,7 +977,7 @@ impl<
 
         for (table, rows) in self.tables {
             for (pk, op) in rows {
-                let rev_op = op.reverse();
+                let rev_op = op.invert(&table);
 
                 reversed.add_operation(&table, pk, rev_op);
             }
@@ -1000,8 +998,6 @@ impl<
     S: Clone + Hash + Eq + AsRef<str>,
     B: Clone + Hash + Eq + AsRef<[u8]>,
 > BitOrAssign for DiffSetBuilder<F, T, S, B>
-where
-    Operation<F, S, B>: core::ops::Add<Output = Option<Operation<F, S, B>>>,
 {
     /// Merge another diff set into this one, consolidating operations on the same row.
     fn bitor_assign(&mut self, rhs: Self) {
@@ -1019,8 +1015,6 @@ impl<
     S: Clone + Hash + Eq + AsRef<str>,
     B: Clone + Hash + Eq + AsRef<[u8]>,
 > BitOr for DiffSetBuilder<F, T, S, B>
-where
-    Operation<F, S, B>: core::ops::Add<Output = Option<Operation<F, S, B>>>,
 {
     type Output = Self;
 
@@ -1247,7 +1241,7 @@ impl<
                 .map(|(table, rows)| {
                     let rev_rows = rows
                         .into_iter()
-                        .map(|(pk, op)| (pk, op.reverse()))
+                        .map(|(pk, op)| (pk, op.invert(&table)))
                         .collect();
                     (table, rev_rows)
                 })
@@ -1513,7 +1507,7 @@ mod tests {
             values: vec![Value::Integer(1), Value::Text("alice".into())],
             indirect: false,
         };
-        let reversed = op.reverse();
+        let reversed = op.invert(&TestTable::new("users", 2, 0));
         let Operation::Delete { data, .. } = reversed else {
             panic!("Expected Delete operation");
         };
@@ -1532,7 +1526,7 @@ mod tests {
             data: vec![Value::Integer(1), Value::Text("alice".into())],
             indirect: false,
         };
-        let reversed = op.reverse();
+        let reversed = op.invert(&TestTable::new("users", 2, 0));
         let Operation::Insert { values, .. } = reversed else {
             panic!("Expected Insert operation");
         };
@@ -1557,7 +1551,7 @@ mod tests {
             ],
             indirect: false,
         };
-        let reversed = op.reverse();
+        let reversed = op.invert(&TestTable::new("users", 2, 0));
         let Operation::Update { values, .. } = reversed else {
             panic!("Expected Update operation");
         };
@@ -2072,7 +2066,7 @@ mod tests {
             values: vec![Value::Integer(1)],
             indirect: true,
         };
-        let reversed = insert.reverse();
+        let reversed = insert.invert(&TestTable::new("t", 1, 0));
         assert!(reversed.indirect());
         assert!(matches!(reversed, Operation::Delete { .. }));
 
@@ -2081,7 +2075,7 @@ mod tests {
             data: vec![Value::Integer(1)],
             indirect: true,
         };
-        let reversed = delete.reverse();
+        let reversed = delete.invert(&TestTable::new("t", 1, 0));
         assert!(reversed.indirect());
         assert!(matches!(reversed, Operation::Insert { .. }));
 
@@ -2090,7 +2084,7 @@ mod tests {
             values: vec![(Some(Value::Integer(1)), Some(Value::Integer(2)))],
             indirect: true,
         };
-        let reversed = update.reverse();
+        let reversed = update.invert(&TestTable::new("t", 1, 0));
         assert!(reversed.indirect());
         assert!(matches!(reversed, Operation::Update { .. }));
     }
@@ -2257,6 +2251,10 @@ mod tests {
     // Operation merge (Add) arms
     // ========================================================================
 
+    fn two_columns() -> TestTable {
+        TestTable::new("t", 2, 0)
+    }
+
     fn changeset_insert(v: i64) -> Operation<ChangesetFormat, String, Vec<u8>> {
         Operation::Insert {
             values: vec![Value::Integer(v), Value::Text("a".into())],
@@ -2283,7 +2281,9 @@ mod tests {
 
     #[test]
     fn test_add_changeset_insert_plus_update() {
-        let merged = (changeset_insert(1) + changeset_update(1, 2)).unwrap();
+        let merged = changeset_insert(1)
+            .merge(changeset_update(1, 2), &two_columns())
+            .unwrap();
         let Operation::Insert { values, .. } = merged else {
             panic!("expected Insert");
         };
@@ -2294,14 +2294,18 @@ mod tests {
     #[test]
     fn test_add_changeset_update_plus_insert() {
         // UPDATE wins, values are the UPDATE's, indirect is rhs (=false here).
-        let merged = (changeset_update(1, 2) + changeset_insert(99)).unwrap();
+        let merged = changeset_update(1, 2)
+            .merge(changeset_insert(99), &two_columns())
+            .unwrap();
         assert!(matches!(merged, Operation::Update { .. }));
     }
 
     #[test]
     fn test_add_changeset_update_plus_update() {
         // First old, last new.
-        let merged = (changeset_update(1, 2) + changeset_update(2, 3)).unwrap();
+        let merged = changeset_update(1, 2)
+            .merge(changeset_update(2, 3), &two_columns())
+            .unwrap();
         let Operation::Update { values, .. } = merged else {
             panic!("expected Update");
         };
@@ -2312,7 +2316,9 @@ mod tests {
     #[test]
     fn test_add_changeset_update_plus_delete() {
         // UPDATE+DELETE collapses to DELETE carrying the UPDATE's old values.
-        let merged = (changeset_update(1, 2) + changeset_delete(99)).unwrap();
+        let merged = changeset_update(1, 2)
+            .merge(changeset_delete(99), &two_columns())
+            .unwrap();
         let Operation::Delete { data, .. } = merged else {
             panic!("expected Delete");
         };
@@ -2322,13 +2328,17 @@ mod tests {
 
     #[test]
     fn test_add_changeset_delete_plus_update_keeps_delete() {
-        let merged = (changeset_delete(1) + changeset_update(1, 2)).unwrap();
+        let merged = changeset_delete(1)
+            .merge(changeset_update(1, 2), &two_columns())
+            .unwrap();
         assert!(matches!(merged, Operation::Delete { .. }));
     }
 
     #[test]
     fn test_add_changeset_delete_plus_delete_keeps_first() {
-        let merged = (changeset_delete(1) + changeset_delete(2)).unwrap();
+        let merged = changeset_delete(1)
+            .merge(changeset_delete(2), &two_columns())
+            .unwrap();
         let Operation::Delete { data, .. } = merged else {
             panic!("expected Delete");
         };
@@ -2361,7 +2371,7 @@ mod tests {
 
     #[test]
     fn test_add_patchset_insert_plus_update() {
-        let merged = (patchset_insert(1) + patchset_update(2)).unwrap();
+        let merged = patchset_insert(1).merge(patchset_update(2)).unwrap();
         let Operation::Insert { values, .. } = merged else {
             panic!("expected Insert");
         };
@@ -2371,13 +2381,13 @@ mod tests {
 
     #[test]
     fn test_add_patchset_update_plus_insert() {
-        let merged = (patchset_update(2) + patchset_insert(99)).unwrap();
+        let merged = patchset_update(2).merge(patchset_insert(99)).unwrap();
         assert!(matches!(merged, Operation::Update { .. }));
     }
 
     #[test]
     fn test_add_patchset_update_plus_update() {
-        let merged = (patchset_update(2) + patchset_update(3)).unwrap();
+        let merged = patchset_update(2).merge(patchset_update(3)).unwrap();
         let Operation::Update { values, .. } = merged else {
             panic!("expected Update");
         };
@@ -2386,26 +2396,26 @@ mod tests {
 
     #[test]
     fn test_add_patchset_update_plus_delete() {
-        let merged = (patchset_update(2) + patchset_delete()).unwrap();
+        let merged = patchset_update(2).merge(patchset_delete()).unwrap();
         assert!(matches!(merged, Operation::Delete { .. }));
     }
 
     #[test]
     fn test_add_patchset_delete_plus_insert_promotes_to_update() {
         // Patchset can't compare old values, so DELETE + INSERT always becomes UPDATE.
-        let merged = (patchset_delete() + patchset_insert(1)).unwrap();
+        let merged = patchset_delete().merge(patchset_insert(1)).unwrap();
         assert!(matches!(merged, Operation::Update { .. }));
     }
 
     #[test]
     fn test_add_patchset_delete_plus_update_keeps_delete() {
-        let merged = (patchset_delete() + patchset_update(2)).unwrap();
+        let merged = patchset_delete().merge(patchset_update(2)).unwrap();
         assert!(matches!(merged, Operation::Delete { .. }));
     }
 
     #[test]
     fn test_add_patchset_delete_plus_delete_keeps_first() {
-        let merged = (patchset_delete() + patchset_delete()).unwrap();
+        let merged = patchset_delete().merge(patchset_delete()).unwrap();
         assert!(matches!(merged, Operation::Delete { .. }));
     }
 

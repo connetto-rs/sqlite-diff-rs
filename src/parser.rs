@@ -553,10 +553,7 @@ fn parse_insert<F: Format<String, Vec<u8>>>(
     schema: &TableSchema<String>,
     builder: &mut ParsedBuilder<F>,
     indirect: bool,
-) -> Result<usize, ParseError>
-where
-    Operation<F, String, Vec<u8>>: core::ops::Add<Output = Option<Operation<F, String, Vec<u8>>>>,
-{
+) -> Result<usize, ParseError> {
     let (values, len) = parse_row(data, base_pos, schema.column_count)?;
     let pk = schema.extract_pk(&values);
     builder.add_operation(schema, pk, Operation::Insert { values, indirect });
