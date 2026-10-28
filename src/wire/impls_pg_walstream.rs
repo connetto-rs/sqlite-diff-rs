@@ -1,14 +1,17 @@
 //! `Decoder` implementations and `TypeMapDefaults` for the `PgWalstream` source.
 
+use alloc::borrow::Cow;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
+use super::adapter::WireAdapter;
+use super::array::{decode_binary_array, decode_text_array, payload_element};
 use super::decoder::{
-    BoolDecoder, DateDecoder, DecimalMinorUnitsDecoder, DecimalTextDecoder, Decoder,
-    Int64OverflowToTextDecoder, IntDecoder, IntervalIso8601Decoder, IntervalPostgresDecoder,
-    JsonCanonicalDecoder, JsonVerbatimDecoder, MySqlBinaryDecoder, NullDecoder,
-    PgByteaBinaryDecoder, PgByteaTextModeDecoder, RealDecoder, TextDecoder, TimeDecoder,
-    TimestampDecoder, TimestampTzDecoder, UuidBlob16Decoder, UuidText36Decoder,
+    ArrayJsonDecoder, BoolDecoder, DateDecoder, DecimalMinorUnitsDecoder, DecimalTextDecoder,
+    Decoder, Int64OverflowToTextDecoder, IntDecoder, IntervalIso8601Decoder,
+    IntervalPostgresDecoder, JsonCanonicalDecoder, JsonVerbatimDecoder, MySqlBinaryDecoder,
+    NullDecoder, PgByteaBinaryDecoder, PgByteaTextModeDecoder, RealDecoder, TextDecoder,
+    TimeDecoder, TimestampDecoder, TimestampTzDecoder, UuidBlob16Decoder, UuidText36Decoder,
 };
 use super::error::DecodeError;
 use super::minor_units::{
@@ -377,6 +380,47 @@ impl<S, B> Decoder<PgWalstream, S, B> for DecimalMinorUnitsDecoder {
     }
 }
 
+impl<S, B> Decoder<PgWalstream, S, B> for ArrayJsonDecoder
+where
+    S: From<alloc::string::String> + AsRef<str>,
+    B: From<Vec<u8>>,
+{
+    fn decode(&self, payload: PgWalstreamColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        self.decode_within(payload, &PgWalstream::defaults())
+    }
+
+    fn decode_within(
+        &self,
+        payload: PgWalstreamColumn<'_>,
+        adapter: &dyn WireAdapter<PgWalstream, S, B>,
+    ) -> Result<Value<S, B>, DecodeError> {
+        let wire_type = payload_element(payload.column_name, payload.wire_type)?.wire_type();
+        let element = |data: &ColumnValue| {
+            adapter.decode(PgWalstreamColumn {
+                column_name: payload.column_name,
+                wire_type,
+                data,
+            })
+        };
+        match payload.data {
+            ColumnValue::Null => Ok(Value::Null),
+            ColumnValue::Text(b) => {
+                decode_text_array(payload.column_name, text_of(&payload)?, |text| {
+                    element(&match text {
+                        Cow::Borrowed(text) => {
+                            ColumnValue::text_bytes(b.slice_ref(text.as_bytes()))
+                        }
+                        Cow::Owned(text) => ColumnValue::text(&text),
+                    })
+                })
+            }
+            ColumnValue::Binary(b) => decode_binary_array(payload.column_name, b, |raw| {
+                element(&ColumnValue::binary_bytes(b.slice_ref(raw)))
+            }),
+        }
+    }
+}
+
 // PgByteaTextModeDecoder and MySqlBinaryDecoder are wire-format
 // specific to wal2json / maxwell respectively; on pg_walstream they
 // stay NotYetImplemented.
@@ -462,7 +506,7 @@ not_yet_impl!(MySqlBinaryDecoder);
 
 impl<S, B> TypeMapDefaults<S, B> for PgWalstream
 where
-    S: From<alloc::string::String>,
+    S: From<alloc::string::String> + AsRef<str>,
     B: From<Vec<u8>>,
 {
     fn defaults() -> TypeMap<Self, S, B> {
@@ -482,5 +526,6 @@ where
             .with(WireKind::Interval, IntervalIso8601Decoder)
             .with(WireKind::Json, JsonVerbatimDecoder)
             .with(WireKind::Jsonb, JsonVerbatimDecoder)
+            .with(WireKind::Array, ArrayJsonDecoder)
     }
 }

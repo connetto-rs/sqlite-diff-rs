@@ -23,6 +23,7 @@
 //! - [`TypeMapDefaults`]: per-source `defaults()` builder for a
 //!   [`TypeMap`] pre-populated with the crate's self-evident mappings.
 mod adapter;
+mod array;
 #[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]
 mod bytes_helpers;
 #[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]
@@ -58,7 +59,7 @@ pub use adapter::WireAdapter;
 pub use conversion_error::ConversionError;
 pub use decoder::Decoder;
 pub use decoder::{
-    BoolDecoder, DateDecoder, DecimalMinorUnitsDecoder, DecimalTextDecoder,
+    ArrayJsonDecoder, BoolDecoder, DateDecoder, DecimalMinorUnitsDecoder, DecimalTextDecoder,
     Int64OverflowToTextDecoder, IntDecoder, IntervalIso8601Decoder, IntervalPostgresDecoder,
     JsonCanonicalDecoder, JsonVerbatimDecoder, MySqlBinaryDecoder, NullDecoder,
     PgByteaBinaryDecoder, PgByteaTextModeDecoder, RealDecoder, TextDecoder, TimeDecoder,
@@ -74,4 +75,4 @@ pub(crate) use shared_builders::{
 };
 pub use source::{Digestable, PgBinary, PgBinaryColumn, WireColumnTypes, WireSchema, WireSource};
 pub use type_map::{TypeMap, TypeMapDefaults};
-pub use wire_type::{WireKind, WireType};
+pub use wire_type::{ArrayElement, WireKind, WireType};

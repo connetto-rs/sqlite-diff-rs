@@ -88,7 +88,7 @@ impl<Src: WireSource, S, B> WireAdapter<Src, S, B> for TypeMap<Src, S, B> {
     fn decode(&self, payload: Src::Payload<'_>) -> Result<Value<S, B>, DecodeError> {
         let key = Src::wire_type(&payload).kind();
         match self.entries.get(&key) {
-            Some(decoder) => decoder.decode(payload),
+            Some(decoder) => decoder.decode_within(payload, self),
             None => Err(DecodeError::NoDecoderForType {
                 column: Src::column_name(&payload).to_string(),
             }),

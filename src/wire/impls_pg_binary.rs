@@ -10,10 +10,12 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
+use super::adapter::WireAdapter;
+use super::array::{decode_binary_array, payload_element};
 use super::decoder::{
-    BoolDecoder, DateDecoder, DecimalMinorUnitsDecoder, DecimalTextDecoder, Decoder, IntDecoder,
-    IntervalIso8601Decoder, IntervalPostgresDecoder, JsonVerbatimDecoder, NullDecoder,
-    PgByteaBinaryDecoder, RealDecoder, TextDecoder, TimeDecoder, TimestampDecoder,
+    ArrayJsonDecoder, BoolDecoder, DateDecoder, DecimalMinorUnitsDecoder, DecimalTextDecoder,
+    Decoder, IntDecoder, IntervalIso8601Decoder, IntervalPostgresDecoder, JsonVerbatimDecoder,
+    NullDecoder, PgByteaBinaryDecoder, RealDecoder, TextDecoder, TimeDecoder, TimestampDecoder,
     TimestampTzDecoder, UuidBlob16Decoder,
 };
 use super::error::DecodeError;
@@ -158,6 +160,34 @@ impl<S, B> Decoder<PgBinary, S, B> for DecimalMinorUnitsDecoder {
     }
 }
 
+impl<S, B> Decoder<PgBinary, S, B> for ArrayJsonDecoder
+where
+    S: From<String> + AsRef<str>,
+    B: From<Vec<u8>>,
+{
+    fn decode(&self, payload: PgBinaryColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        self.decode_within(payload, &PgBinary::defaults())
+    }
+
+    fn decode_within(
+        &self,
+        payload: PgBinaryColumn<'_>,
+        adapter: &dyn WireAdapter<PgBinary, S, B>,
+    ) -> Result<Value<S, B>, DecodeError> {
+        let wire_type = payload_element(payload.column_name, payload.wire_type)?.wire_type();
+        let Some(bytes) = payload.raw else {
+            return Ok(Value::Null);
+        };
+        decode_binary_array(payload.column_name, bytes, |raw| {
+            adapter.decode(PgBinaryColumn {
+                column_name: payload.column_name,
+                wire_type,
+                raw: Some(raw),
+            })
+        })
+    }
+}
+
 impl<S, B> Decoder<PgBinary, S, B> for JsonVerbatimDecoder
 where
     S: From<String>,
@@ -201,7 +231,7 @@ temporal_impl!(
 
 impl<S, B> TypeMapDefaults<S, B> for PgBinary
 where
-    S: From<String>,
+    S: From<String> + AsRef<str>,
     B: From<Vec<u8>>,
 {
     fn defaults() -> TypeMap<Self, S, B> {
@@ -221,5 +251,6 @@ where
             .with(WireKind::Interval, IntervalIso8601Decoder)
             .with(WireKind::Json, JsonVerbatimDecoder)
             .with(WireKind::Jsonb, JsonVerbatimDecoder)
+            .with(WireKind::Array, ArrayJsonDecoder)
     }
 }

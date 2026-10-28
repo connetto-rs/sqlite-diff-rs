@@ -6,9 +6,13 @@
 
 `IntervalDecoder` is renamed `IntervalIso8601Decoder`, after the text it stores, and `TypeMap::defaults()` still registers it for `WireKind::Interval` on every source.
 
+The `PgBinary`, pgoutput and wal2json `TypeMap::defaults()` require `S: AsRef<str>` beside `S: From<String>`, since the array decoder they register reads each element's text.
+
 ### Added
 
 `IntervalPostgresDecoder` stores an `interval` as the text Postgres prints under its default `IntervalStyle = postgres`, such as `00:15:00`, `1 year 2 mons 3 days 04:05:06.789` or `-1 days +02:00:00`, whether the value arrives as pgoutput text or binary, wal2json, Maxwell or a `PgBinary` query result. A replica that keeps intervals in that form registers it under `WireKind::Interval`. Like `IntervalIso8601Decoder` it reads only `postgres`-style text and refuses an infinite interval with `DecodeError::UnrepresentableTemporal`.
+
+`WireType::Array { element }` declares a PostgreSQL array, held as JSON array text, of an `ArrayElement` type. The `PgBinary`, pgoutput and wal2json `TypeMap::defaults()` register the new `ArrayJsonDecoder` for it, which decodes the array text `{1,NULL,3}` and the binary `array_send` form alike to `[1,null,3]`, with nested arrays for more dimensions and `[]` for an empty array. Each element decodes through the decoder its type has in the `TypeMap`, the new provided `Decoder::decode_within` method handing the decoder that map, so an element is stored as a scalar column of its type and then written as JSON, an integer or a boolean as a number, a real as its shortest round-trip number, and text as a string. An element decoding to a blob and an array whose lower bound is not 1 are refused with the new `DecodeError::UnrepresentableArray`, and text or bytes PostgreSQL would not produce with `DecodeError::WrongPayloadKind`. Maxwell registers no array decoder, since MySQL has no arrays.
 
 ## 0.17.0
 

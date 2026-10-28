@@ -2,6 +2,7 @@
 //! [`Value`](crate::encoding::Value), plus every built-in decoder unit
 //! type the crate ships.
 
+use super::adapter::WireAdapter;
 use super::error::DecodeError;
 use super::source::WireSource;
 use crate::encoding::Value;
@@ -21,6 +22,26 @@ pub trait Decoder<Src: WireSource, S, B> {
     /// variant carries the offending column name so the outer
     /// [`WireAdapter`](super::adapter::WireAdapter) impl does not have to wrap.
     fn decode(&self, payload: Src::Payload<'_>) -> Result<Value<S, B>, DecodeError>;
+
+    /// Decode one payload whose nested values, such as an array's
+    /// elements, decode through `adapter`, the way
+    /// [`TypeMap`](super::TypeMap) calls every decoder it holds so an
+    /// element decodes exactly as a scalar column of its type does.
+    ///
+    /// Decoders of values without nested values keep the default, which
+    /// is [`decode`](Self::decode).
+    ///
+    /// # Errors
+    ///
+    /// As [`decode`](Self::decode), and any error `adapter` returns for a
+    /// nested value.
+    fn decode_within(
+        &self,
+        payload: Src::Payload<'_>,
+        _adapter: &dyn WireAdapter<Src, S, B>,
+    ) -> Result<Value<S, B>, DecodeError> {
+        self.decode(payload)
+    }
 }
 
 // ------------------------------------------------------------------
@@ -140,3 +161,25 @@ pub struct JsonVerbatimDecoder;
 /// JSON text.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct JsonCanonicalDecoder;
+
+/// Decoder for [`WireType::Array`](super::WireType::Array) columns,
+/// storing a PostgreSQL array, from its text `{1,2}` or its binary
+/// `array_send` form, as JSON array text such as `[1,2]`, with nested
+/// arrays for more dimensions.
+///
+/// Each element decodes through the decoder its
+/// [`ArrayElement`](super::ArrayElement) type has in the
+/// [`TypeMap`](super::TypeMap) the array decodes in, so an element is
+/// stored as a scalar column of its type is, then written as JSON: an
+/// `Integer` as a number, a `Real` as its shortest round-trip number, a
+/// `Text` as a string and `NULL` as `null`. Called directly instead of
+/// through a `TypeMap`, elements decode through the source's
+/// [`TypeMapDefaults`](super::TypeMapDefaults).
+///
+/// An element decoding to a `Blob`, which JSON cannot hold, and an array
+/// whose lower bound is not 1, which JSON cannot express, are refused
+/// with [`DecodeError::UnrepresentableArray`](super::DecodeError::UnrepresentableArray).
+/// Text or bytes PostgreSQL would not produce are refused with
+/// [`DecodeError::WrongPayloadKind`](super::DecodeError::WrongPayloadKind).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ArrayJsonDecoder;
