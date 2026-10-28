@@ -12,10 +12,12 @@ use super::decoder::{
     IntervalPostgresDecoder, JsonCanonicalDecoder, JsonVerbatimDecoder, MySqlBinaryDecoder,
     NullDecoder, PgByteaBinaryDecoder, PgByteaTextModeDecoder, RealDecoder, TextDecoder,
     TimeDecoder, TimestampDecoder, TimestampTzDecoder, UuidBlob16Decoder, UuidText36Decoder,
+    VectorFloat32Decoder,
 };
 use super::error::DecodeError;
 use super::temporal::{IntervalStyle, Temporal, decode_temporal_text};
 use super::type_map::{TypeMap, TypeMapDefaults};
+use super::vector::{decode_pgvector_text, payload_dimensions};
 use super::wire_type::{ArrayElement, WireKind};
 use crate::encoding::Value;
 use crate::wal2json::{Wal2Json, Wal2JsonColumn};
@@ -239,6 +241,18 @@ where
     }
 }
 
+impl<S, B> Decoder<Wal2Json, S, B> for VectorFloat32Decoder
+where
+    B: From<Vec<u8>>,
+{
+    fn decode(&self, payload: Wal2JsonColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        let dimensions = payload_dimensions(payload.column_name, payload.wire_type)?;
+        super::json_decoders::decode_json_str_with(&payload, |text| {
+            decode_pgvector_text(payload.column_name, text, dimensions)
+        })
+    }
+}
+
 /// The JSON wal2json writes for a scalar column of `element`'s type whose
 /// text output is `text`: a boolean as `true` or `false`, a number bare
 /// unless it is `NaN` or an infinity, which become `null`, and anything else
@@ -265,7 +279,6 @@ fn scalar_json(element: ArrayElement, text: Cow<'_, str>) -> serde_json::Value {
         _ => serde_json::Value::String(text.into_owned()),
     }
 }
-
 macro_rules! temporal_impl {
     ($decoder:ty, $kind:expr) => {
         impl<S, B> Decoder<Wal2Json, S, B> for $decoder
@@ -350,5 +363,6 @@ where
             .with(WireKind::Json, JsonVerbatimDecoder)
             .with(WireKind::Jsonb, JsonVerbatimDecoder)
             .with(WireKind::Array, ArrayJsonDecoder)
+            .with(WireKind::Vector, VectorFloat32Decoder)
     }
 }

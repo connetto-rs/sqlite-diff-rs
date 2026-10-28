@@ -12,6 +12,7 @@ use super::decoder::{
     IntervalPostgresDecoder, JsonCanonicalDecoder, JsonVerbatimDecoder, MySqlBinaryDecoder,
     NullDecoder, PgByteaBinaryDecoder, PgByteaTextModeDecoder, RealDecoder, TextDecoder,
     TimeDecoder, TimestampDecoder, TimestampTzDecoder, UuidBlob16Decoder, UuidText36Decoder,
+    VectorFloat32Decoder,
 };
 use super::error::DecodeError;
 use super::minor_units::{
@@ -23,6 +24,7 @@ use super::scalar_helpers::{
 };
 use super::temporal::{IntervalStyle, Temporal, decode_temporal_binary, decode_temporal_text};
 use super::type_map::{TypeMap, TypeMapDefaults};
+use super::vector::{decode_pgvector_binary, decode_pgvector_text, payload_dimensions};
 use super::wire_type::WireKind;
 use crate::encoding::Value;
 use crate::pg_walstream::{ColumnValue, PgWalstream, PgWalstreamColumn};
@@ -421,6 +423,22 @@ where
     }
 }
 
+impl<S, B> Decoder<PgWalstream, S, B> for VectorFloat32Decoder
+where
+    B: From<Vec<u8>>,
+{
+    fn decode(&self, payload: PgWalstreamColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        let dimensions = payload_dimensions(payload.column_name, payload.wire_type)?;
+        match payload.data {
+            ColumnValue::Null => Ok(Value::Null),
+            ColumnValue::Text(_) => {
+                decode_pgvector_text(payload.column_name, text_of(&payload)?, dimensions)
+            }
+            ColumnValue::Binary(b) => decode_pgvector_binary(payload.column_name, b, dimensions),
+        }
+    }
+}
+
 // PgByteaTextModeDecoder and MySqlBinaryDecoder are wire-format
 // specific to wal2json / maxwell respectively; on pg_walstream they
 // stay NotYetImplemented.
@@ -527,5 +545,6 @@ where
             .with(WireKind::Json, JsonVerbatimDecoder)
             .with(WireKind::Jsonb, JsonVerbatimDecoder)
             .with(WireKind::Array, ArrayJsonDecoder)
+            .with(WireKind::Vector, VectorFloat32Decoder)
     }
 }

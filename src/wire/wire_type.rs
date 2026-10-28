@@ -8,8 +8,9 @@
 /// [`WireColumnTypes`](super::WireColumnTypes)) and every payload carries
 /// it. [`TypeMap`](super::TypeMap) dispatches on its [`WireKind`], so a
 /// variant's parameters, such as [`ScaledDecimal`](Self::ScaledDecimal)'s
-/// scale or [`Array`](Self::Array)'s element type, reach the decoder
-/// through the payload while one registration serves every value of them.
+/// scale, [`Array`](Self::Array)'s element type or [`Vector`](Self::Vector)'s
+/// dimension, reach the decoder through the payload while one registration
+/// serves every value of them.
 ///
 /// The set covers every decoder the crate ships. `Json` and `Jsonb`
 /// stay distinct so a downstream that treats them differently can
@@ -63,6 +64,14 @@ pub enum WireType {
     Array {
         /// Type of every element.
         element: ArrayElement,
+    },
+    /// Vector of single-precision floats, such as pgvector's `vector(n)`,
+    /// held in sqlite-vec's float32 layout, a `BLOB` of the elements as
+    /// little-endian IEEE 754 `f32` with no header.
+    Vector {
+        /// Number of elements every value has, or `None` when the column
+        /// declares no dimension and any length is accepted.
+        dimensions: Option<u32>,
     },
 }
 
@@ -145,6 +154,7 @@ impl WireType {
             Self::Json => WireKind::Json,
             Self::Jsonb => WireKind::Jsonb,
             Self::Array { .. } => WireKind::Array,
+            Self::Vector { .. } => WireKind::Vector,
         }
     }
 }
@@ -153,9 +163,10 @@ impl WireType {
 /// [`TypeMap`](super::TypeMap) registers decoders under.
 ///
 /// Every [`WireType::ScaledDecimal`] maps to [`WireKind::ScaledDecimal`]
-/// whatever its scale, and every [`WireType::Array`] to [`WireKind::Array`]
-/// whatever its element type. The decoder reads the parameter from the
-/// payload.
+/// whatever its scale, every [`WireType::Array`] to [`WireKind::Array`]
+/// whatever its element type, and every [`WireType::Vector`] to
+/// [`WireKind::Vector`] whatever its dimension. The decoder reads the
+/// parameter from the payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum WireKind {
@@ -191,4 +202,6 @@ pub enum WireKind {
     Jsonb,
     /// [`WireType::Array`] of any element type.
     Array,
+    /// [`WireType::Vector`] of any dimension.
+    Vector,
 }

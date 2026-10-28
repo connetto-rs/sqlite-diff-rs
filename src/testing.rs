@@ -883,9 +883,10 @@ pub fn run_crash_dir_regression(
 /// Every [`WireType`](crate::wire::WireType) variant, used by the wire
 /// fuzz helpers to exercise each default decoder. `ScaledDecimal` appears
 /// at scale 0, at a typical scale and at one where any nonzero integer
-/// part overflows `i64`, and `Array` with elements decoding to an integer,
-/// a boolean integer, a real, text and a blob JSON cannot hold.
-const ALL_WIRE_TYPES: [crate::wire::WireType; 22] = [
+/// part overflows `i64`, `Array` with elements decoding to an integer, a
+/// boolean integer, a real, text and a blob JSON cannot hold, and `Vector`
+/// without and with a dimension.
+const ALL_WIRE_TYPES: [crate::wire::WireType; 24] = [
     crate::wire::WireType::Bool,
     crate::wire::WireType::Int,
     crate::wire::WireType::Real,
@@ -917,6 +918,10 @@ const ALL_WIRE_TYPES: [crate::wire::WireType; 22] = [
     },
     crate::wire::WireType::Array {
         element: crate::wire::ArrayElement::Bytes,
+    },
+    crate::wire::WireType::Vector { dimensions: None },
+    crate::wire::WireType::Vector {
+        dimensions: Some(3),
     },
 ];
 
