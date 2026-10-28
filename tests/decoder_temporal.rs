@@ -3,8 +3,10 @@
 //! `TimestampTzDecoder` stores UTC as `YYYY-MM-DD HH:MM:SS.ffffff+00:00`,
 //! `TimestampDecoder` stores `YYYY-MM-DD HH:MM:SS.ffffff`, `DateDecoder`
 //! stores `YYYY-MM-DD`, `TimeDecoder` stores `HH:MM:SS.ffffff` or, for a
-//! `timetz`, UTC `HH:MM:SS.ffffff+00:00`, and `IntervalDecoder` stores the
-//! ISO 8601 duration Postgres prints under `IntervalStyle = iso_8601`.
+//! `timetz`, UTC `HH:MM:SS.ffffff+00:00`. `IntervalIso8601Decoder` stores
+//! the ISO 8601 duration Postgres prints under `IntervalStyle = iso_8601`,
+//! and `IntervalPostgresDecoder` the text it prints under the default
+//! `IntervalStyle = postgres`.
 
 #![cfg(all(feature = "wal2json", feature = "pg-walstream", feature = "maxwell"))]
 
@@ -16,7 +18,10 @@ use alloc::vec::Vec;
 use sqlite_diff_rs::maxwell::{Maxwell, MaxwellColumn};
 use sqlite_diff_rs::pg_walstream::{ColumnValue, PgWalstream, PgWalstreamColumn};
 use sqlite_diff_rs::wal2json::{Wal2Json, Wal2JsonColumn};
-use sqlite_diff_rs::{DecodeError, TypeMap, Value, WireAdapter, WireType};
+use sqlite_diff_rs::{
+    DecodeError, Decoder, IntervalIso8601Decoder, IntervalPostgresDecoder, TypeMap, Value,
+    WireAdapter, WireType,
+};
 
 type Decoded = Result<Value<String, Vec<u8>>, DecodeError>;
 
@@ -57,6 +62,45 @@ fn is_malformed(got: &Decoded) -> bool {
 
 fn is_unrepresentable(got: &Decoded) -> bool {
     matches!(got, Err(DecodeError::UnrepresentableTemporal { column, .. }) if column == "c")
+}
+
+/// `text` decoded by `decoder` as an `interval` from pgoutput, wal2json
+/// and Maxwell.
+fn interval_by<D>(decoder: &D, text: &str) -> [Decoded; 3]
+where
+    D: Decoder<PgWalstream, String, Vec<u8>>
+        + Decoder<Wal2Json, String, Vec<u8>>
+        + Decoder<Maxwell, String, Vec<u8>>,
+{
+    let json = serde_json::Value::String(text.into());
+    [
+        PgWalstreamColumn {
+            column_name: "c",
+            wire_type: WireType::Interval,
+            data: &ColumnValue::text(text),
+        }
+        .decoded_by(decoder),
+        Wal2JsonColumn {
+            column_name: "c",
+            wire_type: WireType::Interval,
+            value: &json,
+        }
+        .decoded_by(decoder),
+        MaxwellColumn {
+            column_name: "c",
+            wire_type: WireType::Interval,
+            value: &json,
+        }
+        .decoded_by(decoder),
+    ]
+}
+
+/// `text` decoded as an `interval` by both interval decoders on every
+/// text source.
+fn interval_by_both(text: &str) -> impl Iterator<Item = Decoded> {
+    interval_by(&IntervalIso8601Decoder, text)
+        .into_iter()
+        .chain(interval_by(&IntervalPostgresDecoder, text))
 }
 
 #[test]
@@ -168,19 +212,63 @@ fn interval_postgres_style_becomes_iso_8601() {
             Ok(text(replica)),
             "{wire}"
         );
+        for got in interval_by(&IntervalIso8601Decoder, wire) {
+            assert_eq!(got, Ok(text(replica)), "{wire}");
+        }
     }
+}
+
+#[test]
+fn interval_postgres_decoder_stores_postgres_text_on_every_source() {
+    for wire in [
+        "00:15:00",
+        "1 year 2 mons 3 days 04:05:06.789",
+        "1 day",
+        "00:00:00",
+        "-1 days +02:00:00",
+        "-1 years +2 days 03:00:00",
+        "-1 years -2 mons -3 days -04:05:06.789",
+    ] {
+        for got in interval_by(&IntervalPostgresDecoder, wire) {
+            assert_eq!(got, Ok(text(wire)), "{wire}");
+        }
+    }
+}
+
+#[test]
+fn infinite_interval_is_refused_by_both_decoders() {
+    for wire in ["infinity", "-infinity"] {
+        for got in interval_by_both(wire) {
+            assert!(is_unrepresentable(&got), "{wire} gave {got:?}");
+        }
+    }
+}
+
+#[test]
+fn interval_postgres_decoder_passes_null_through() {
+    let got: Decoded = PgWalstreamColumn {
+        column_name: "c",
+        wire_type: WireType::Interval,
+        data: &ColumnValue::Null,
+    }
+    .decoded_by(&IntervalPostgresDecoder);
+    assert_eq!(got, Ok(Value::Null));
 }
 
 #[test]
 fn interval_in_another_interval_style_is_refused() {
     for wire in [
         "P1Y2M3DT4H5M6.789S",
+        "PT15M",
         "@ 1 year 2 mons",
+        "@ 15 mins",
         "1-2 3 4:05:06.789",
         "1 year 2 months",
         "1 day ago",
     ] {
-        assert!(is_malformed(&pgoutput(WireType::Interval, wire)), "{wire}");
+        for got in interval_by_both(wire) {
+            assert!(is_malformed(&got), "{wire} gave {got:?}");
+        }
     }
 }
 
@@ -222,8 +310,6 @@ fn temporal_values_a_replica_cannot_hold_are_refused() {
         (WireType::TimestampTz, "9999-12-31 23:30:00-01"),
         (WireType::TimestampTz, "-infinity"),
         (WireType::Time, "24:00:00"),
-        (WireType::Interval, "infinity"),
-        (WireType::Interval, "-infinity"),
     ] {
         assert!(
             is_unrepresentable(&pgoutput(wire_type, wire)),

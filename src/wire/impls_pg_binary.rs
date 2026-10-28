@@ -12,8 +12,9 @@ use alloc::vec::Vec;
 
 use super::decoder::{
     BoolDecoder, DateDecoder, DecimalMinorUnitsDecoder, DecimalTextDecoder, Decoder, IntDecoder,
-    IntervalDecoder, JsonVerbatimDecoder, NullDecoder, PgByteaBinaryDecoder, RealDecoder,
-    TextDecoder, TimeDecoder, TimestampDecoder, TimestampTzDecoder, UuidBlob16Decoder,
+    IntervalIso8601Decoder, IntervalPostgresDecoder, JsonVerbatimDecoder, NullDecoder,
+    PgByteaBinaryDecoder, RealDecoder, TextDecoder, TimeDecoder, TimestampDecoder,
+    TimestampTzDecoder, UuidBlob16Decoder,
 };
 use super::error::DecodeError;
 use super::minor_units::{decode_pg_numeric_binary_minor_units, payload_scale};
@@ -22,7 +23,7 @@ use super::scalar_helpers::{
     decode_pg_real_binary,
 };
 use super::source::{PgBinary, PgBinaryColumn};
-use super::temporal::{Temporal, decode_temporal_binary};
+use super::temporal::{IntervalStyle, Temporal, decode_temporal_binary};
 use super::type_map::{TypeMap, TypeMapDefaults};
 use super::wire_type::WireKind;
 use crate::encoding::Value;
@@ -189,7 +190,14 @@ temporal_impl!(DateDecoder, Temporal::Date);
 temporal_impl!(TimeDecoder, Temporal::Time);
 temporal_impl!(TimestampDecoder, Temporal::Timestamp);
 temporal_impl!(TimestampTzDecoder, Temporal::TimestampTz);
-temporal_impl!(IntervalDecoder, Temporal::Interval);
+temporal_impl!(
+    IntervalIso8601Decoder,
+    Temporal::Interval(IntervalStyle::Iso8601)
+);
+temporal_impl!(
+    IntervalPostgresDecoder,
+    Temporal::Interval(IntervalStyle::Postgres)
+);
 
 impl<S, B> TypeMapDefaults<S, B> for PgBinary
 where
@@ -210,7 +218,7 @@ where
             .with(WireKind::TimestampTz, TimestampTzDecoder)
             .with(WireKind::Date, DateDecoder)
             .with(WireKind::Time, TimeDecoder)
-            .with(WireKind::Interval, IntervalDecoder)
+            .with(WireKind::Interval, IntervalIso8601Decoder)
             .with(WireKind::Json, JsonVerbatimDecoder)
             .with(WireKind::Jsonb, JsonVerbatimDecoder)
     }

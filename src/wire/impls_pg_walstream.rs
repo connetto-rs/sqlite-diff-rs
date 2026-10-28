@@ -5,10 +5,10 @@ use alloc::vec::Vec;
 
 use super::decoder::{
     BoolDecoder, DateDecoder, DecimalMinorUnitsDecoder, DecimalTextDecoder, Decoder,
-    Int64OverflowToTextDecoder, IntDecoder, IntervalDecoder, JsonCanonicalDecoder,
-    JsonVerbatimDecoder, MySqlBinaryDecoder, NullDecoder, PgByteaBinaryDecoder,
-    PgByteaTextModeDecoder, RealDecoder, TextDecoder, TimeDecoder, TimestampDecoder,
-    TimestampTzDecoder, UuidBlob16Decoder, UuidText36Decoder,
+    Int64OverflowToTextDecoder, IntDecoder, IntervalIso8601Decoder, IntervalPostgresDecoder,
+    JsonCanonicalDecoder, JsonVerbatimDecoder, MySqlBinaryDecoder, NullDecoder,
+    PgByteaBinaryDecoder, PgByteaTextModeDecoder, RealDecoder, TextDecoder, TimeDecoder,
+    TimestampDecoder, TimestampTzDecoder, UuidBlob16Decoder, UuidText36Decoder,
 };
 use super::error::DecodeError;
 use super::minor_units::{
@@ -18,7 +18,7 @@ use super::scalar_helpers::{
     decode_pg_bool_binary, decode_pg_int_binary, decode_pg_json_binary, decode_pg_numeric_binary,
     decode_pg_real_binary, normalize_real, pg_json_binary_text,
 };
-use super::temporal::{Temporal, decode_temporal_binary, decode_temporal_text};
+use super::temporal::{IntervalStyle, Temporal, decode_temporal_binary, decode_temporal_text};
 use super::type_map::{TypeMap, TypeMapDefaults};
 use super::wire_type::WireKind;
 use crate::encoding::Value;
@@ -416,7 +416,14 @@ temporal_impl!(DateDecoder, Temporal::Date);
 temporal_impl!(TimeDecoder, Temporal::Time);
 temporal_impl!(TimestampDecoder, Temporal::Timestamp);
 temporal_impl!(TimestampTzDecoder, Temporal::TimestampTz);
-temporal_impl!(IntervalDecoder, Temporal::Interval);
+temporal_impl!(
+    IntervalIso8601Decoder,
+    Temporal::Interval(IntervalStyle::Iso8601)
+);
+temporal_impl!(
+    IntervalPostgresDecoder,
+    Temporal::Interval(IntervalStyle::Postgres)
+);
 
 impl<S, B> Decoder<PgWalstream, S, B> for JsonVerbatimDecoder
 where
@@ -472,7 +479,7 @@ where
             .with(WireKind::TimestampTz, TimestampTzDecoder)
             .with(WireKind::Date, DateDecoder)
             .with(WireKind::Time, TimeDecoder)
-            .with(WireKind::Interval, IntervalDecoder)
+            .with(WireKind::Interval, IntervalIso8601Decoder)
             .with(WireKind::Json, JsonVerbatimDecoder)
             .with(WireKind::Jsonb, JsonVerbatimDecoder)
     }

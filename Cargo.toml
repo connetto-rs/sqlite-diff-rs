@@ -1,6 +1,6 @@
 [package]
 name = "sqlite-diff-rs"
-version = "0.17.0"
+version = "0.18.0"
 edition = "2024"
 rust-version = "1.87"
 description = "Build SQLite changeset and patchset binary formats programmatically, without SQLite"

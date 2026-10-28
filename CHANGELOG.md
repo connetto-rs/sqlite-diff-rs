@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.18.0
+
+### Breaking
+
+`IntervalDecoder` is renamed `IntervalIso8601Decoder`, after the text it stores, and `TypeMap::defaults()` still registers it for `WireKind::Interval` on every source.
+
+### Added
+
+`IntervalPostgresDecoder` stores an `interval` as the text Postgres prints under its default `IntervalStyle = postgres`, such as `00:15:00`, `1 year 2 mons 3 days 04:05:06.789` or `-1 days +02:00:00`, whether the value arrives as pgoutput text or binary, wal2json, Maxwell or a `PgBinary` query result. A replica that keeps intervals in that form registers it under `WireKind::Interval`. Like `IntervalIso8601Decoder` it reads only `postgres`-style text and refuses an infinite interval with `DecodeError::UnrepresentableTemporal`.
+
 ## 0.17.0
 
 ### Breaking
