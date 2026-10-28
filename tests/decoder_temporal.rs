@@ -95,6 +95,14 @@ where
     ]
 }
 
+/// `text` decoded as an `interval` by both interval decoders on every
+/// text source.
+fn interval_by_both(text: &str) -> impl Iterator<Item = Decoded> {
+    interval_by(&IntervalIso8601Decoder, text)
+        .into_iter()
+        .chain(interval_by(&IntervalPostgresDecoder, text))
+}
+
 #[test]
 fn timestamptz_offsets_become_utc_on_every_source() {
     for (wire, replica) in [
@@ -230,10 +238,8 @@ fn interval_postgres_decoder_stores_postgres_text_on_every_source() {
 #[test]
 fn infinite_interval_is_refused_by_both_decoders() {
     for wire in ["infinity", "-infinity"] {
-        let iso = interval_by(&IntervalIso8601Decoder, wire);
-        let postgres = interval_by(&IntervalPostgresDecoder, wire);
-        for got in iso.iter().chain(&postgres) {
-            assert!(is_unrepresentable(got), "{wire} gave {got:?}");
+        for got in interval_by_both(wire) {
+            assert!(is_unrepresentable(&got), "{wire} gave {got:?}");
         }
     }
 }
@@ -260,10 +266,8 @@ fn interval_in_another_interval_style_is_refused() {
         "1 year 2 months",
         "1 day ago",
     ] {
-        let iso = interval_by(&IntervalIso8601Decoder, wire);
-        let postgres = interval_by(&IntervalPostgresDecoder, wire);
-        for got in iso.iter().chain(&postgres) {
-            assert!(is_malformed(got), "{wire} gave {got:?}");
+        for got in interval_by_both(wire) {
+            assert!(is_malformed(&got), "{wire} gave {got:?}");
         }
     }
 }
