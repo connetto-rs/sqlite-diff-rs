@@ -10,6 +10,7 @@ use core::fmt::Debug;
 use crate::{
     builders::{ChangesetFormat, PatchsetFormat, format::Format},
     encoding::{MaybeValue, Value},
+    schema::SchemaWithPK,
 };
 
 /// A schema-less database operation, parameterized by format `F` and value
@@ -77,15 +78,40 @@ fn apply_update<F: Format<S, B>, S, B>(
     values
 }
 
-/// Two consecutive UPDATEs as one, keeping the first's old values and the second's new ones.
-fn merge_updates<F: Format<S, B>, S, B>(
-    lhs: UpdatePairs<F, S, B>,
-    rhs: UpdatePairs<F, S, B>,
-) -> UpdatePairs<F, S, B> {
-    lhs.into_iter()
-        .zip(rhs)
-        .map(|((old, _mid), (_mid2, new))| (old, new))
-        .collect()
+/// The `(old, new)` pairs of a changeset UPDATE.
+type ChangesetPairs<S, B> = Vec<(MaybeValue<S, B>, MaybeValue<S, B>)>;
+
+/// The pairs of a changeset UPDATE as `sessionMergeUpdate` writes them, or `None` when the
+/// UPDATE changes nothing.
+///
+/// A non-key column whose old and new values are equal is undefined on both sides. A key column
+/// keeps its old value as the row identity, and its new value only when the key moved, which
+/// SQLite never records but the CDC digests do.
+fn settle_update<S, B, T: SchemaWithPK>(
+    pairs: impl Iterator<Item = (MaybeValue<S, B>, MaybeValue<S, B>)>,
+    table: &T,
+) -> Option<ChangesetPairs<S, B>>
+where
+    S: AsRef<str> + PartialEq,
+    B: AsRef<[u8]> + PartialEq,
+{
+    let mut changed = false;
+    let settled = pairs
+        .enumerate()
+        .map(|(col_idx, (old, new))| {
+            if table.primary_key_index(col_idx).is_some() {
+                let new = new.filter(|new| old.as_ref() != Some(new));
+                changed |= new.is_some();
+                (old, new)
+            } else if old == new {
+                (None, None)
+            } else {
+                changed = true;
+                (old, new)
+            }
+        })
+        .collect();
+    changed.then_some(settled)
 }
 
 impl<F: Format<S, B>, S: PartialEq + AsRef<str>, B: PartialEq + AsRef<[u8]>> PartialEq
@@ -145,12 +171,14 @@ pub trait Reverse {
     fn reverse(self) -> Self::Output;
 }
 
-impl<S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>> Reverse
-    for Operation<ChangesetFormat, S, B>
+impl<S: Clone + Debug + PartialEq + AsRef<str>, B: Clone + Debug + PartialEq + AsRef<[u8]>>
+    Operation<ChangesetFormat, S, B>
 {
-    type Output = Self;
-
-    fn reverse(self) -> Self::Output {
+    /// The inverse of this operation, as `sqlite3changeset_invert` writes it.
+    ///
+    /// An UPDATE swaps its old and new values, except on a key column whose new value is
+    /// undefined, which keeps the key in the old record.
+    pub(crate) fn invert<T: SchemaWithPK>(self, table: &T) -> Self {
         match self {
             // INSERT reversed becomes DELETE (same values)
             Self::Insert { values, indirect } => Self::Delete {
@@ -162,25 +190,27 @@ impl<S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>> Reverse
                 values: data,
                 indirect,
             },
-            // UPDATE reversed becomes UPDATE with old/new swapped
+            // UPDATE reversed becomes UPDATE with old/new swapped, the key staying old
             Self::Update { values, indirect } => Self::Update {
-                values: values.into_iter().map(|(old, new)| (new, old)).collect(),
+                values: values
+                    .into_iter()
+                    .enumerate()
+                    .map(|(col_idx, (old, new))| {
+                        if new.is_none() && table.primary_key_index(col_idx).is_some() {
+                            (old, new)
+                        } else {
+                            (new, old)
+                        }
+                    })
+                    .collect(),
                 indirect,
             },
         }
     }
-}
 
-// ============================================================================
-// Operation + Operation for Changeset
-// ============================================================================
-
-impl<S: Clone + Debug + PartialEq + AsRef<str>, B: Clone + Debug + PartialEq + AsRef<[u8]>>
-    core::ops::Add for Operation<ChangesetFormat, S, B>
-{
-    type Output = Option<Self>;
-
-    fn add(self, rhs: Self) -> Self::Output {
+    /// This operation followed by `rhs` on the same row of `table`, as
+    /// `sqlite3changeset_concat` merges them, or `None` when they cancel out.
+    pub(crate) fn merge<T: SchemaWithPK>(self, rhs: Self, table: &T) -> Option<Self> {
         // "Last-write-wins": the merged op carries the rhs operand's
         // indirect flag.
         let indirect = rhs.indirect();
@@ -211,42 +241,34 @@ impl<S: Clone + Debug + PartialEq + AsRef<str>, B: Clone + Debug + PartialEq + A
                 indirect,
             }),
 
-            // UPDATE + UPDATE: keep original old, use final new
+            // UPDATE + UPDATE: first defined old, last defined new, dropped if nothing changes
             (Self::Update { values: lhs, .. }, Self::Update { values: rhs, .. }) => {
-                Some(Self::Update {
-                    values: merge_updates::<ChangesetFormat, S, B>(lhs, rhs),
-                    indirect,
-                })
-            }
-
-            // UPDATE + DELETE: delete with original old values
-            (Self::Update { values: upd, .. }, Self::Delete { .. }) => {
-                // Collect old values, converting MaybeValue to Value (None becomes Null)
-                let old_values = upd
+                let merged = lhs
                     .into_iter()
-                    .map(|(old, _new)| old.unwrap_or(Value::Null))
-                    .collect();
+                    .zip(rhs)
+                    .map(|((old1, new1), (old2, new2))| (old1.or(old2), new2.or(new1)));
+                settle_update(merged, table).map(|values| Self::Update { values, indirect })
+            }
+
+            // UPDATE + DELETE: delete with the update's old values, the delete's where undefined
+            (Self::Update { values: upd, .. }, Self::Delete { data: del, .. }) => {
                 Some(Self::Delete {
-                    data: old_values,
+                    data: upd
+                        .into_iter()
+                        .zip(del)
+                        .map(|((old, _new), deleted)| old.unwrap_or(deleted))
+                        .collect(),
                     indirect,
                 })
             }
 
-            // DELETE + INSERT: update if different, cancel if same
+            // DELETE + INSERT: update of the differing columns, cancel if same
             (Self::Delete { data: del, .. }, Self::Insert { values: ins, .. }) => {
-                if del == ins {
-                    None // Same values, cancel out
-                } else {
-                    let update_values = del
-                        .into_iter()
-                        .zip(ins)
-                        .map(|(old, new)| (Some(old), Some(new)))
-                        .collect();
-                    Some(Self::Update {
-                        values: update_values,
-                        indirect,
-                    })
-                }
+                let pairs = del
+                    .into_iter()
+                    .zip(ins)
+                    .map(|(old, new)| (Some(old), Some(new)));
+                settle_update(pairs, table).map(|values| Self::Update { values, indirect })
             }
 
             // DELETE + UPDATE or DELETE + DELETE: keep the delete with rhs's indirect
@@ -260,16 +282,10 @@ impl<S: Clone + Debug + PartialEq + AsRef<str>, B: Clone + Debug + PartialEq + A
     }
 }
 
-// ============================================================================
-// Operation + Operation for Patchset
-// ============================================================================
-
-impl<S: Clone + PartialEq + AsRef<str>, B: Clone + PartialEq + AsRef<[u8]>> core::ops::Add
-    for Operation<PatchsetFormat, S, B>
-{
-    type Output = Option<Self>;
-
-    fn add(self, rhs: Self) -> Self::Output {
+impl<S, B> Operation<PatchsetFormat, S, B> {
+    /// This operation followed by `rhs` on the same row, as `sqlite3changeset_concat`
+    /// merges them, or `None` when they cancel out.
+    pub(crate) fn merge(self, rhs: Self) -> Option<Self> {
         let indirect = rhs.indirect();
         match (self, rhs) {
             // INSERT + INSERT: keep first
@@ -298,10 +314,14 @@ impl<S: Clone + PartialEq + AsRef<str>, B: Clone + PartialEq + AsRef<[u8]>> core
                 indirect,
             }),
 
-            // UPDATE + UPDATE: keep original old (unit), use final new
+            // UPDATE + UPDATE: last defined new value of each column
             (Self::Update { values: lhs, .. }, Self::Update { values: rhs, .. }) => {
                 Some(Self::Update {
-                    values: merge_updates::<PatchsetFormat, S, B>(lhs, rhs),
+                    values: lhs
+                        .into_iter()
+                        .zip(rhs)
+                        .map(|(((), new1), ((), new2))| ((), new2.or(new1)))
+                        .collect(),
                     indirect,
                 })
             }

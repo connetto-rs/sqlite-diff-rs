@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+`Update::set_old` sets a changeset column's old value and leaves its new value undefined, which is how SQLite's session records a primary key column of an `UPDATE` that keeps its key.
+
+### Fixed
+
+Consolidating two operations on one row, in a builder or through `|`, gives the operation `sqlite3changeset_concat` gives. An `UPDATE` followed by an `UPDATE` keeps, per column, the first defined old value and the last defined new value, so a column only the first one changed keeps its new value, in changesets and patchsets alike. A changeset `UPDATE` followed by a `DELETE` takes the delete's old value for every column the update left undefined. A changeset `UPDATE` that ends with no column changed is dropped, and a changeset `DELETE` followed by a differing `INSERT` becomes an `UPDATE` of the differing columns only. In a merged changeset `UPDATE` a primary key column holds its old value as the row identity, and a new value only when the key moved, which SQLite never records but the CDC digests do.
+
+`Reverse` on a changeset keeps an `UPDATE`'s primary key in the old record when its new value is undefined, as `sqlite3changeset_invert` does, so reversing an `UPDATE` recorded by SQLite yields a valid changeset.
+
 ## 0.16.1
 
 ### Added

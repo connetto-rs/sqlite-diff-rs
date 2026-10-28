@@ -51,6 +51,17 @@ pub(crate) trait Format<S, B>: Default + Clone + Copy + PartialEq + Eq + 'static
     ) where
         S: AsRef<str>,
         B: AsRef<[u8]>;
+
+    /// `existing` followed by `new` on the same row of `table`, as `sqlite3changeset_concat`
+    /// merges them, or `None` when they cancel out.
+    fn merge<T: SchemaWithPK>(
+        existing: Operation<Self, S, B>,
+        new: Operation<Self, S, B>,
+        table: &T,
+    ) -> Option<Operation<Self, S, B>>
+    where
+        S: AsRef<str> + PartialEq,
+        B: AsRef<[u8]> + PartialEq;
 }
 
 /// Public, nameable bound for a diff format, either changeset or patchset.
@@ -95,6 +106,18 @@ impl<S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>> Format<S, B>
     {
         encode_changeset_op(out, op);
     }
+
+    fn merge<T: SchemaWithPK>(
+        existing: Operation<Self, S, B>,
+        new: Operation<Self, S, B>,
+        table: &T,
+    ) -> Option<Operation<Self, S, B>>
+    where
+        S: AsRef<str> + PartialEq,
+        B: AsRef<[u8]> + PartialEq,
+    {
+        existing.merge(new, table)
+    }
 }
 
 /// Patchset format marker.
@@ -121,5 +144,17 @@ impl<S, B> Format<S, B> for PatchsetFormat {
         B: AsRef<[u8]>,
     {
         encode_patchset_op(out, op, pk, &state.0, &state.1);
+    }
+
+    fn merge<T: SchemaWithPK>(
+        existing: Operation<Self, S, B>,
+        new: Operation<Self, S, B>,
+        _table: &T,
+    ) -> Option<Operation<Self, S, B>>
+    where
+        S: AsRef<str> + PartialEq,
+        B: AsRef<[u8]> + PartialEq,
+    {
+        existing.merge(new)
     }
 }
