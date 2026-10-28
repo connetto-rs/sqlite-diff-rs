@@ -188,6 +188,34 @@ where
     }
 }
 
+/// Decodes a JSON number or decimal string into the minor units at `scale`, or
+/// [`Value::Null`]. A number is read from its decimal text, whose digits the
+/// crate's `serde_json/arbitrary_precision` feature keeps exactly.
+///
+/// # Errors
+///
+/// Returns [`DecodeError::UnrepresentableDecimal`] for a value that is not a whole
+/// `i64` of minor units, and [`DecodeError::WrongPayloadKind`] if the JSON value is
+/// not a decimal string, a number, or null.
+pub(crate) fn decode_json_minor_units<P: AsJsonValue, S, B>(
+    payload: &P,
+    scale: u32,
+) -> Result<Value<S, B>, DecodeError> {
+    let text = match payload.json_value() {
+        serde_json::Value::Null => return Ok(Value::Null),
+        serde_json::Value::String(s) => s.as_str(),
+        serde_json::Value::Number(n) => n.as_str(),
+        _ => {
+            return Err(DecodeError::WrongPayloadKind {
+                column: payload.column_name().to_string(),
+                expected: "JSON string or number decimal",
+                actual: "other JSON shape",
+            });
+        }
+    };
+    super::minor_units::decode_text_minor_units(payload.column_name(), text, scale)
+}
+
 /// Decodes a UUID JSON string into a 16-byte [`Value::Blob`], or [`Value::Null`].
 ///
 /// # Errors

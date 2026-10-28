@@ -18,7 +18,8 @@
 //! - [`WireAdapter`]: single-method dispatcher fed a per-column
 //!   payload, returns a [`Value`](crate::encoding::Value).
 //! - [`TypeMap`]: generic hashmap-backed [`WireAdapter`] implementation
-//!   keyed by [`WireType`]. The primary user-facing type.
+//!   keyed by [`WireKind`], the [`WireType`] without its parameters. The
+//!   primary user-facing type.
 //! - [`TypeMapDefaults`]: per-source `defaults()` builder for a
 //!   [`TypeMap`] pre-populated with the crate's self-evident mappings.
 mod adapter;
@@ -32,6 +33,7 @@ mod error;
 mod json_decoders;
 #[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]
 mod json_helpers;
+mod minor_units;
 mod scalar_helpers;
 mod sealed;
 #[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]
@@ -56,10 +58,11 @@ pub use adapter::WireAdapter;
 pub use conversion_error::ConversionError;
 pub use decoder::Decoder;
 pub use decoder::{
-    BoolDecoder, DateDecoder, DecimalTextDecoder, Int64OverflowToTextDecoder, IntDecoder,
-    IntervalDecoder, JsonCanonicalDecoder, JsonVerbatimDecoder, MySqlBinaryDecoder, NullDecoder,
-    PgByteaBinaryDecoder, PgByteaTextModeDecoder, RealDecoder, TextDecoder, TimeDecoder,
-    TimestampDecoder, TimestampTzDecoder, UuidBlob16Decoder, UuidText36Decoder,
+    BoolDecoder, DateDecoder, DecimalMinorUnitsDecoder, DecimalTextDecoder,
+    Int64OverflowToTextDecoder, IntDecoder, IntervalDecoder, JsonCanonicalDecoder,
+    JsonVerbatimDecoder, MySqlBinaryDecoder, NullDecoder, PgByteaBinaryDecoder,
+    PgByteaTextModeDecoder, RealDecoder, TextDecoder, TimeDecoder, TimestampDecoder,
+    TimestampTzDecoder, UuidBlob16Decoder, UuidText36Decoder,
 };
 pub use error::DecodeError;
 #[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]
@@ -71,4 +74,4 @@ pub(crate) use shared_builders::{
 };
 pub use source::{Digestable, PgBinary, PgBinaryColumn, WireColumnTypes, WireSchema, WireSource};
 pub use type_map::{TypeMap, TypeMapDefaults};
-pub use wire_type::WireType;
+pub use wire_type::{WireKind, WireType};

@@ -82,6 +82,16 @@ pub struct UuidText36Decoder;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DecimalTextDecoder;
 
+/// Decoder for [`WireType::ScaledDecimal`](super::WireType::ScaledDecimal)
+/// columns, storing `value × 10^scale` as `Value::Integer` with the scale
+/// read from the payload, so `12.50` at scale 2 is `1250`.
+///
+/// A value that is not a whole number of minor units fitting an `i64`,
+/// `NaN` and an infinity are refused with
+/// [`DecodeError::UnrepresentableDecimal`], never rounded.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DecimalMinorUnitsDecoder;
+
 /// Decoder for `timestamp` (without time zone), storing
 /// `YYYY-MM-DD HH:MM:SS.ffffff` as `Value::Text`.
 #[derive(Debug, Clone, Copy, Default)]

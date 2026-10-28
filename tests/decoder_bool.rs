@@ -21,7 +21,7 @@ use bytes::Bytes;
 use sqlite_diff_rs::maxwell::{Maxwell, MaxwellColumn};
 use sqlite_diff_rs::pg_walstream::{ColumnValue, PgWalstream, PgWalstreamColumn};
 use sqlite_diff_rs::wal2json::{Wal2Json, Wal2JsonColumn};
-use sqlite_diff_rs::{BoolDecoder, DecodeError, TypeMap, Value, WireAdapter, WireType};
+use sqlite_diff_rs::{BoolDecoder, DecodeError, TypeMap, Value, WireAdapter, WireKind, WireType};
 
 // -- Standalone decoder contract ---------------------------------------------
 
@@ -234,12 +234,12 @@ fn type_map_defaults_route_bool_key_to_bool_decoder() {
 }
 
 /// A `TypeMap` with only `BoolDecoder` registered under
-/// `WireType::Bool` still declines unregistered types with
+/// `WireKind::Bool` still declines unregistered types with
 /// `NoDecoderForType`.
 #[test]
 fn user_registered_bool_still_declines_unknown_keys() {
     let mut types: TypeMap<Wal2Json, String, Vec<u8>> = TypeMap::new();
-    types.register(WireType::Bool, BoolDecoder);
+    types.register(WireKind::Bool, BoolDecoder);
 
     let val = serde_json::Value::Bool(true);
     let got_bool = types

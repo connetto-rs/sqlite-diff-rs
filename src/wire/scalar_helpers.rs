@@ -122,8 +122,8 @@ pub(crate) fn decode_pg_numeric_binary<S, B>(
 where
     S: From<String>,
 {
-    render_pg_numeric(bytes)
-        .map(|text| Value::Text(S::from(text)))
+    PgNumeric::parse(bytes)
+        .map(|numeric| Value::Text(S::from(numeric.render())))
         .ok_or_else(|| DecodeError::WrongPayloadKind {
             column: column_name.to_string(),
             expected: "numeric binary",
@@ -131,70 +131,106 @@ where
         })
 }
 
-fn render_pg_numeric(bytes: &[u8]) -> Option<String> {
-    const POSITIVE: u16 = 0x0000;
-    const NEGATIVE: u16 = 0x4000;
-    const NAN: u16 = 0xC000;
-    const INFINITY: u16 = 0xD000;
-    const NEGATIVE_INFINITY: u16 = 0xF000;
-    const MAX_DSCALE: u16 = 0x3FFF;
+/// A PostgreSQL binary `numeric` whose header and digits are well formed.
+pub(crate) struct PgNumeric<'a> {
+    /// `NaN`, `Infinity` or `-Infinity`, which carry no digits.
+    pub(crate) special: Option<&'static str>,
+    /// Whether a finite value is negative.
+    pub(crate) negative: bool,
+    /// Power of 10000 the first digit is multiplied by.
+    pub(crate) weight: i64,
+    /// Fractional decimal digits the value is displayed with.
+    dscale: usize,
+    /// Big-endian base-10000 digits, each at most 9999.
+    digits: &'a [u8],
+}
 
-    let field = |at: usize| Some(u16::from_be_bytes(bytes.get(at..at + 2)?.try_into().ok()?));
-    let ndigits = usize::from(field(0)?);
-    let weight = i64::from(field(2)?.cast_signed());
-    let sign = field(4)?;
-    let dscale = field(6)?;
-    let digits = bytes.get(8..)?;
-    if digits.len() != 2 * ndigits || dscale > MAX_DSCALE {
-        return None;
-    }
-    let special = match sign {
-        NAN => Some("NaN"),
-        INFINITY => Some("Infinity"),
-        NEGATIVE_INFINITY => Some("-Infinity"),
-        POSITIVE | NEGATIVE => None,
-        _ => return None,
-    };
-    if let Some(special) = special {
-        return (ndigits == 0).then(|| String::from(special));
-    }
-    if digits
-        .chunks_exact(2)
-        .any(|d| u16::from_be_bytes([d[0], d[1]]) > 9999)
-    {
-        return None;
-    }
-    let digit = |index: i64| -> u16 {
-        usize::try_from(index)
-            .ok()
-            .and_then(|i| field(8 + 2 * i))
-            .unwrap_or(0)
-    };
+impl<'a> PgNumeric<'a> {
+    /// Read the `ndigits`, `weight`, `sign` and `dscale` big-endian 16-bit
+    /// fields and the `ndigits` base-10000 digits after them, or `None` for
+    /// bytes `numeric_send` would not produce.
+    pub(crate) fn parse(bytes: &'a [u8]) -> Option<Self> {
+        const POSITIVE: u16 = 0x0000;
+        const NEGATIVE: u16 = 0x4000;
+        const NAN: u16 = 0xC000;
+        const INFINITY: u16 = 0xD000;
+        const NEGATIVE_INFINITY: u16 = 0xF000;
+        const MAX_DSCALE: u16 = 0x3FFF;
 
-    let dscale = usize::from(dscale);
-    let mut out = String::with_capacity(ndigits * 4 + dscale + 3);
-    if sign == NEGATIVE {
-        out.push('-');
-    }
-    if weight < 0 {
-        out.push('0');
-    } else {
-        write!(out, "{}", digit(0)).unwrap();
-        for index in 1..=weight {
-            write!(out, "{:04}", digit(index)).unwrap();
+        let field = |at: usize| Some(u16::from_be_bytes(bytes.get(at..at + 2)?.try_into().ok()?));
+        let ndigits = usize::from(field(0)?);
+        let weight = i64::from(field(2)?.cast_signed());
+        let sign = field(4)?;
+        let dscale = field(6)?;
+        let digits = bytes.get(8..)?;
+        if digits.len() != 2 * ndigits || dscale > MAX_DSCALE {
+            return None;
         }
-    }
-    if dscale > 0 {
-        out.push('.');
-        let fraction_start = out.len();
-        let mut index = weight + 1;
-        while out.len() - fraction_start < dscale {
-            write!(out, "{:04}", digit(index)).unwrap();
-            index += 1;
+        let special = match sign {
+            NAN => Some("NaN"),
+            INFINITY => Some("Infinity"),
+            NEGATIVE_INFINITY => Some("-Infinity"),
+            POSITIVE | NEGATIVE => None,
+            _ => return None,
+        };
+        if special.is_some() && ndigits != 0 {
+            return None;
         }
-        out.truncate(fraction_start + dscale);
+        let numeric = Self {
+            special,
+            negative: sign == NEGATIVE,
+            weight,
+            dscale: usize::from(dscale),
+            digits,
+        };
+        let well_formed = numeric.digits().all(|d| d <= 9999);
+        well_formed.then_some(numeric)
     }
-    Some(out)
+
+    /// The base-10000 digits, most significant first.
+    pub(crate) fn digits(&self) -> impl Iterator<Item = u16> + '_ {
+        self.digits
+            .chunks_exact(2)
+            .map(|d| u16::from_be_bytes([d[0], d[1]]))
+    }
+
+    /// The text `numeric_out` prints, which is what a `numeric` carries over
+    /// logical replication in text mode.
+    pub(crate) fn render(&self) -> String {
+        if let Some(special) = self.special {
+            return String::from(special);
+        }
+        let digit = |index: i64| -> u16 {
+            usize::try_from(index)
+                .ok()
+                .and_then(|i| self.digits.get(2 * i..2 * i + 2))
+                .map_or(0, |d| u16::from_be_bytes([d[0], d[1]]))
+        };
+
+        let mut out = String::with_capacity(self.digits.len() * 2 + self.dscale + 3);
+        if self.negative {
+            out.push('-');
+        }
+        if self.weight < 0 {
+            out.push('0');
+        } else {
+            write!(out, "{}", digit(0)).unwrap();
+            for index in 1..=self.weight {
+                write!(out, "{:04}", digit(index)).unwrap();
+            }
+        }
+        if self.dscale > 0 {
+            out.push('.');
+            let fraction_start = out.len();
+            let mut index = self.weight + 1;
+            while out.len() - fraction_start < self.dscale {
+                write!(out, "{:04}", digit(index)).unwrap();
+                index += 1;
+            }
+            out.truncate(fraction_start + self.dscale);
+        }
+        out
+    }
 }
 
 /// Decode a PostgreSQL binary `json` or `jsonb` into [`Value::Text`].

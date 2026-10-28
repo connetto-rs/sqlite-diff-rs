@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use sqlite_diff_rs::maxwell::{Maxwell, MaxwellColumn};
 use sqlite_diff_rs::pg_walstream::{PgWalstream, PgWalstreamColumn};
 use sqlite_diff_rs::wal2json::{Wal2Json, Wal2JsonColumn};
-use sqlite_diff_rs::{DecodeError, TypeMap, Value, WireAdapter, WireSource, WireType};
+use sqlite_diff_rs::{DecodeError, TypeMap, Value, WireAdapter, WireKind, WireSource, WireType};
 
 /// `WireAdapter<Src, S, B>` is object-safe: `dyn WireAdapter<..>` compiles.
 #[test]
@@ -86,7 +86,7 @@ fn type_map_register_and_dispatch_via_null_decoder() {
     use sqlite_diff_rs::NullDecoder;
 
     let mut types: TypeMap<Wal2Json, String, Vec<u8>> = TypeMap::new();
-    types.register(WireType::Int, NullDecoder);
+    types.register(WireKind::Int, NullDecoder);
 
     let value = serde_json::Value::Number(42.into());
     let payload = Wal2JsonColumn {

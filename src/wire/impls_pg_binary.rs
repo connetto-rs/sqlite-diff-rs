@@ -11,11 +11,12 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use super::decoder::{
-    BoolDecoder, DateDecoder, DecimalTextDecoder, Decoder, IntDecoder, IntervalDecoder,
-    JsonVerbatimDecoder, NullDecoder, PgByteaBinaryDecoder, RealDecoder, TextDecoder, TimeDecoder,
-    TimestampDecoder, TimestampTzDecoder, UuidBlob16Decoder,
+    BoolDecoder, DateDecoder, DecimalMinorUnitsDecoder, DecimalTextDecoder, Decoder, IntDecoder,
+    IntervalDecoder, JsonVerbatimDecoder, NullDecoder, PgByteaBinaryDecoder, RealDecoder,
+    TextDecoder, TimeDecoder, TimestampDecoder, TimestampTzDecoder, UuidBlob16Decoder,
 };
 use super::error::DecodeError;
+use super::minor_units::{decode_pg_numeric_binary_minor_units, payload_scale};
 use super::scalar_helpers::{
     decode_pg_bool_binary, decode_pg_int_binary, decode_pg_json_binary, decode_pg_numeric_binary,
     decode_pg_real_binary,
@@ -23,7 +24,7 @@ use super::scalar_helpers::{
 use super::source::{PgBinary, PgBinaryColumn};
 use super::temporal::{Temporal, decode_temporal_binary};
 use super::type_map::{TypeMap, TypeMapDefaults};
-use super::wire_type::WireType;
+use super::wire_type::WireKind;
 use crate::encoding::Value;
 
 impl<S, B> Decoder<PgBinary, S, B> for NullDecoder {
@@ -146,6 +147,16 @@ where
     }
 }
 
+impl<S, B> Decoder<PgBinary, S, B> for DecimalMinorUnitsDecoder {
+    fn decode(&self, payload: PgBinaryColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        let scale = payload_scale(payload.column_name, payload.wire_type)?;
+        match payload.raw {
+            None => Ok(Value::Null),
+            Some(bytes) => decode_pg_numeric_binary_minor_units(payload.column_name, bytes, scale),
+        }
+    }
+}
+
 impl<S, B> Decoder<PgBinary, S, B> for JsonVerbatimDecoder
 where
     S: From<String>,
@@ -187,19 +198,20 @@ where
 {
     fn defaults() -> TypeMap<Self, S, B> {
         TypeMap::new()
-            .with(WireType::Bool, BoolDecoder)
-            .with(WireType::Int, IntDecoder)
-            .with(WireType::Real, RealDecoder)
-            .with(WireType::Text, TextDecoder)
-            .with(WireType::Bytes, PgByteaBinaryDecoder)
-            .with(WireType::Uuid, UuidBlob16Decoder)
-            .with(WireType::Decimal, DecimalTextDecoder)
-            .with(WireType::Timestamp, TimestampDecoder)
-            .with(WireType::TimestampTz, TimestampTzDecoder)
-            .with(WireType::Date, DateDecoder)
-            .with(WireType::Time, TimeDecoder)
-            .with(WireType::Interval, IntervalDecoder)
-            .with(WireType::Json, JsonVerbatimDecoder)
-            .with(WireType::Jsonb, JsonVerbatimDecoder)
+            .with(WireKind::Bool, BoolDecoder)
+            .with(WireKind::Int, IntDecoder)
+            .with(WireKind::Real, RealDecoder)
+            .with(WireKind::Text, TextDecoder)
+            .with(WireKind::Bytes, PgByteaBinaryDecoder)
+            .with(WireKind::Uuid, UuidBlob16Decoder)
+            .with(WireKind::Decimal, DecimalTextDecoder)
+            .with(WireKind::ScaledDecimal, DecimalMinorUnitsDecoder)
+            .with(WireKind::Timestamp, TimestampDecoder)
+            .with(WireKind::TimestampTz, TimestampTzDecoder)
+            .with(WireKind::Date, DateDecoder)
+            .with(WireKind::Time, TimeDecoder)
+            .with(WireKind::Interval, IntervalDecoder)
+            .with(WireKind::Json, JsonVerbatimDecoder)
+            .with(WireKind::Jsonb, JsonVerbatimDecoder)
     }
 }

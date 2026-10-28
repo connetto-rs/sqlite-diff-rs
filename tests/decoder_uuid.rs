@@ -6,7 +6,7 @@
 //! verbatim. Null pass-through. Malformed UUIDs raise
 //! `DecodeError::InvalidUuid`.
 //!
-//! `TypeMap::defaults()` registers `WireType::Uuid` with the verbatim
+//! `TypeMap::defaults()` registers `WireKind::Uuid` with the verbatim
 //! `UuidText36Decoder`. A user who wants the 16-byte blob shape
 //! registers `UuidBlob16Decoder` under the same key instead: the shape
 //! is a registration-time decoder-policy choice, not a separate key.
@@ -22,7 +22,8 @@ use sqlite_diff_rs::maxwell::MaxwellColumn;
 use sqlite_diff_rs::pg_walstream::{ColumnValue, PgWalstream, PgWalstreamColumn};
 use sqlite_diff_rs::wal2json::{Wal2Json, Wal2JsonColumn};
 use sqlite_diff_rs::{
-    DecodeError, TypeMap, UuidBlob16Decoder, UuidText36Decoder, Value, WireAdapter, WireType,
+    DecodeError, TypeMap, UuidBlob16Decoder, UuidText36Decoder, Value, WireAdapter, WireKind,
+    WireType,
 };
 
 const UUID_HYPHENATED: &str = "550e8400-e29b-41d4-a716-446655440000";
@@ -171,7 +172,7 @@ fn uuid_blob16_maxwell_string() {
 
 // -- Shape selection at registration under one semantic key ------------------
 
-/// A single semantic key `WireType::Uuid` selects the UUID shape at
+/// A single semantic key `WireKind::Uuid` selects the UUID shape at
 /// registration time: one `TypeMap` registered with `UuidBlob16Decoder`
 /// produces `Value::Blob`, another registered with `UuidText36Decoder`
 /// produces `Value::Text`, from the identical wire payload. This proves
@@ -180,9 +181,9 @@ fn uuid_blob16_maxwell_string() {
 #[test]
 fn uuid_shape_chosen_at_registration() {
     let mut blob_map: TypeMap<Wal2Json, String, Vec<u8>> = TypeMap::new();
-    blob_map.register(WireType::Uuid, UuidBlob16Decoder);
+    blob_map.register(WireKind::Uuid, UuidBlob16Decoder);
     let mut text_map: TypeMap<Wal2Json, String, Vec<u8>> = TypeMap::new();
-    text_map.register(WireType::Uuid, UuidText36Decoder);
+    text_map.register(WireKind::Uuid, UuidText36Decoder);
 
     let s = serde_json::Value::String(UUID_HYPHENATED.into());
 
@@ -208,7 +209,7 @@ fn uuid_shape_chosen_at_registration() {
 
 // -- Defaults route UUID to verbatim Text36 ----------------------------------
 
-/// `TypeMap::defaults()` now registers `WireType::Uuid` with the
+/// `TypeMap::defaults()` registers `WireKind::Uuid` with the
 /// verbatim `UuidText36Decoder`, so UUID columns decode without any
 /// explicit registration.
 #[test]

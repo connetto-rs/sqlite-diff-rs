@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Breaking
+
+`TypeMap::register` and `TypeMap::with` take a `WireKind`, the new fieldless key a `WireType` reduces to through `WireType::kind`, and `TypeMap` dispatches on the payload's kind. One registration serves every parameter of a parameterised type, and the decoder reads the parameter from the payload's `wire_type`. Downstreams migrate by writing `WireKind::X` where they registered `WireType::X`.
+
+The `wal2json` and `maxwell` features enable `serde_json/arbitrary_precision`, so every JSON number reaches a decoder with its digits exact. `DecimalTextDecoder` keeps a JSON number's digits, and the never-emitted `DecodeError::DecimalPrecisionLoss` is removed.
+
+### Added
+
+`WireType::ScaledDecimal { scale }` declares a decimal held as an integer count of minor units, `value × 10^scale`, as a `NUMERIC(p,s)` replica column stores it. Every source's `TypeMap::defaults()` registers the new `DecimalMinorUnitsDecoder` for it, which decodes `12.50` at scale 2 to `Integer(1250)` from PostgreSQL binary `numeric`, pgoutput text, and wal2json or Maxwell JSON strings and numbers alike, exponent notation included. A value that is not a whole number of minor units fitting an `i64`, `NaN` and an infinity are refused with the new `DecodeError::UnrepresentableDecimal`, never rounded.
+
 ## 0.16.2
 
 ### Added
