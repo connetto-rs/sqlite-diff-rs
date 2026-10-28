@@ -334,6 +334,7 @@ fn malformed_binary_is_wrong_payload_kind() {
         pg_numeric(0, POSITIVE, 0, &[10_000]),
         pg_numeric(0, 0x1234, 0, &[1]),
         pg_numeric(0, NAN, 0, &[1]),
+        pg_numeric(0, POSITIVE, 0x4000, &[1]),
     ] {
         let result = decode_binary_everywhere(CENTS, &raw);
         assert!(
