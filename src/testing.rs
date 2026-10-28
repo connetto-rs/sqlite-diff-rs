@@ -881,8 +881,10 @@ pub fn run_crash_dir_regression(
 // ---------------------------------------------------------------------------
 
 /// Every [`WireType`](crate::wire::WireType) variant, used by the wire
-/// fuzz helpers to exercise each default decoder.
-const ALL_WIRE_TYPES: [crate::wire::WireType; 14] = [
+/// fuzz helpers to exercise each default decoder. `ScaledDecimal` appears
+/// at scale 0, at a typical scale and at one where any nonzero integer
+/// part overflows `i64`.
+const ALL_WIRE_TYPES: [crate::wire::WireType; 17] = [
     crate::wire::WireType::Bool,
     crate::wire::WireType::Int,
     crate::wire::WireType::Real,
@@ -890,6 +892,9 @@ const ALL_WIRE_TYPES: [crate::wire::WireType; 14] = [
     crate::wire::WireType::Bytes,
     crate::wire::WireType::Uuid,
     crate::wire::WireType::Decimal,
+    crate::wire::WireType::ScaledDecimal { scale: 0 },
+    crate::wire::WireType::ScaledDecimal { scale: 2 },
+    crate::wire::WireType::ScaledDecimal { scale: 19 },
     crate::wire::WireType::Timestamp,
     crate::wire::WireType::TimestampTz,
     crate::wire::WireType::Date,

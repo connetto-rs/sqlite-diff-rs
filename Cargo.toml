@@ -1,6 +1,6 @@
 [package]
 name = "sqlite-diff-rs"
-version = "0.16.2"
+version = "0.17.0"
 edition = "2024"
 rust-version = "1.87"
 description = "Build SQLite changeset and patchset binary formats programmatically, without SQLite"
@@ -59,7 +59,7 @@ rusqlite = { version = "0.40", features = [
 ], optional = true }
 arbitrary = { version = "1", features = ["derive"], optional = true }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
-serde_json = { version = "1", default-features = false, features = ["alloc"], optional = true }
+serde_json = { version = "1.0.120", default-features = false, features = ["alloc", "arbitrary_precision"], optional = true }
 wal2json-events = { version = "0.1.0", default-features = false, optional = true }
 maxwell-cdc = { version = "0.1.0", default-features = false, optional = true }
 pg_walstream = { version = "0.9", default-features = false, optional = true }

@@ -4,19 +4,23 @@ use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use super::decoder::{
-    BoolDecoder, DateDecoder, DecimalTextDecoder, Decoder, Int64OverflowToTextDecoder, IntDecoder,
-    IntervalDecoder, JsonCanonicalDecoder, JsonVerbatimDecoder, MySqlBinaryDecoder, NullDecoder,
-    PgByteaBinaryDecoder, PgByteaTextModeDecoder, RealDecoder, TextDecoder, TimeDecoder,
-    TimestampDecoder, TimestampTzDecoder, UuidBlob16Decoder, UuidText36Decoder,
+    BoolDecoder, DateDecoder, DecimalMinorUnitsDecoder, DecimalTextDecoder, Decoder,
+    Int64OverflowToTextDecoder, IntDecoder, IntervalDecoder, JsonCanonicalDecoder,
+    JsonVerbatimDecoder, MySqlBinaryDecoder, NullDecoder, PgByteaBinaryDecoder,
+    PgByteaTextModeDecoder, RealDecoder, TextDecoder, TimeDecoder, TimestampDecoder,
+    TimestampTzDecoder, UuidBlob16Decoder, UuidText36Decoder,
 };
 use super::error::DecodeError;
+use super::minor_units::{
+    decode_pg_numeric_binary_minor_units, decode_text_minor_units, payload_scale,
+};
 use super::scalar_helpers::{
     decode_pg_bool_binary, decode_pg_int_binary, decode_pg_json_binary, decode_pg_numeric_binary,
     decode_pg_real_binary, normalize_real, pg_json_binary_text,
 };
 use super::temporal::{Temporal, decode_temporal_binary, decode_temporal_text};
 use super::type_map::{TypeMap, TypeMapDefaults};
-use super::wire_type::WireType;
+use super::wire_type::WireKind;
 use crate::encoding::Value;
 use crate::pg_walstream::{ColumnValue, PgWalstream, PgWalstreamColumn};
 
@@ -358,6 +362,21 @@ where
     }
 }
 
+impl<S, B> Decoder<PgWalstream, S, B> for DecimalMinorUnitsDecoder {
+    fn decode(&self, payload: PgWalstreamColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        let scale = payload_scale(payload.column_name, payload.wire_type)?;
+        match payload.data {
+            ColumnValue::Null => Ok(Value::Null),
+            ColumnValue::Text(_) => {
+                decode_text_minor_units(payload.column_name, text_of(&payload)?, scale)
+            }
+            ColumnValue::Binary(b) => {
+                decode_pg_numeric_binary_minor_units(payload.column_name, b, scale)
+            }
+        }
+    }
+}
+
 // PgByteaTextModeDecoder and MySqlBinaryDecoder are wire-format
 // specific to wal2json / maxwell respectively; on pg_walstream they
 // stay NotYetImplemented.
@@ -441,19 +460,20 @@ where
 {
     fn defaults() -> TypeMap<Self, S, B> {
         TypeMap::new()
-            .with(WireType::Bool, BoolDecoder)
-            .with(WireType::Int, IntDecoder)
-            .with(WireType::Real, RealDecoder)
-            .with(WireType::Text, TextDecoder)
-            .with(WireType::Bytes, PgByteaBinaryDecoder)
-            .with(WireType::Uuid, UuidText36Decoder)
-            .with(WireType::Decimal, DecimalTextDecoder)
-            .with(WireType::Timestamp, TimestampDecoder)
-            .with(WireType::TimestampTz, TimestampTzDecoder)
-            .with(WireType::Date, DateDecoder)
-            .with(WireType::Time, TimeDecoder)
-            .with(WireType::Interval, IntervalDecoder)
-            .with(WireType::Json, JsonVerbatimDecoder)
-            .with(WireType::Jsonb, JsonVerbatimDecoder)
+            .with(WireKind::Bool, BoolDecoder)
+            .with(WireKind::Int, IntDecoder)
+            .with(WireKind::Real, RealDecoder)
+            .with(WireKind::Text, TextDecoder)
+            .with(WireKind::Bytes, PgByteaBinaryDecoder)
+            .with(WireKind::Uuid, UuidText36Decoder)
+            .with(WireKind::Decimal, DecimalTextDecoder)
+            .with(WireKind::ScaledDecimal, DecimalMinorUnitsDecoder)
+            .with(WireKind::Timestamp, TimestampDecoder)
+            .with(WireKind::TimestampTz, TimestampTzDecoder)
+            .with(WireKind::Date, DateDecoder)
+            .with(WireKind::Time, TimeDecoder)
+            .with(WireKind::Interval, IntervalDecoder)
+            .with(WireKind::Json, JsonVerbatimDecoder)
+            .with(WireKind::Jsonb, JsonVerbatimDecoder)
     }
 }

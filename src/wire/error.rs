@@ -65,14 +65,6 @@ pub enum DecodeError {
         digits: String,
     },
 
-    /// Column carried a decimal that was delivered as a JSON number,
-    /// which cannot preserve precision above ~15 significant digits.
-    #[error("column {column:?} carried a decimal as a lossy JSON number")]
-    DecimalPrecisionLoss {
-        /// Offending column name.
-        column: String,
-    },
-
     /// JSON payload failed to serialize into the target text form.
     /// Only observable when a JSON decoder receives a value that
     /// `serde_json` cannot round-trip through `to_string`.
@@ -106,6 +98,21 @@ pub enum DecodeError {
         column: String,
         /// The value as received, or its binary rendering.
         value: String,
+    },
+
+    /// Decimal that is not a whole number of minor units at the column's
+    /// scale fitting an `i64`, which is a value needing rounding, one out
+    /// of `i64` range, `NaN`, or an infinity.
+    #[error(
+        "column {column:?} carried {value}, which is not a whole i64 of minor units at scale {scale}"
+    )]
+    UnrepresentableDecimal {
+        /// Offending column name.
+        column: String,
+        /// The value as received, or its binary rendering.
+        value: String,
+        /// The scale the column declares.
+        scale: u32,
     },
 
     /// Free-form failure emitted by user-supplied decoders.

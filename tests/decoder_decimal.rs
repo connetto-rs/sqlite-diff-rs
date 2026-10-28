@@ -1,10 +1,8 @@
 //! Tests for `DecimalTextDecoder`.
 //!
 //! Cross-format contract: `DecimalTextDecoder` preserves the wire
-//! decimal verbatim as `Value::Text`. Numeric JSON sources are
-//! rejected with `DecodeError::DecimalPrecisionLoss` because
-//! `serde_json::Number::as_f64` truncates precision above ~15 digits.
-//! Null pass-through.
+//! decimal verbatim as `Value::Text`, a JSON number included, since the
+//! crate keeps a JSON number's digits exactly. Null pass-through.
 
 #![cfg(all(feature = "wal2json", feature = "pg-walstream", feature = "maxwell"))]
 
@@ -71,21 +69,18 @@ fn decimal_wal2json_string_verbatim() {
 }
 
 #[test]
-fn decimal_wal2json_number_serializes_via_display() {
-    // JSON `Number` no longer errors. `serde_json::Number::to_string`
-    // preserves the parsed digit sequence. Callers who need
-    // arbitrary precision above ~15 digits should enable serde_json's
-    // `arbitrary_precision` feature or ensure their producer emits
-    // decimals as JSON strings.
-    let n = serde_json::Value::Number(serde_json::Number::from(1234_i64));
-    let got: Value<String, Vec<u8>> = Wal2JsonColumn {
-        column_name: "n",
-        wire_type: WireType::Decimal,
-        value: &n,
+fn decimal_wal2json_number_keeps_its_digits() {
+    for literal in ["1234", "12.50", "1234567890123456.78", "1.0000000000000001"] {
+        let n: serde_json::Value = serde_json::from_str(literal).unwrap();
+        let got: Value<String, Vec<u8>> = Wal2JsonColumn {
+            column_name: "n",
+            wire_type: WireType::Decimal,
+            value: &n,
+        }
+        .decoded_by(&DecimalTextDecoder)
+        .unwrap();
+        assert_eq!(got, Value::Text(String::from(literal)));
     }
-    .decoded_by(&DecimalTextDecoder)
-    .unwrap();
-    assert_eq!(got, Value::Text(String::from("1234")));
 }
 
 // -- maxwell -----------------------------------------------------------------
