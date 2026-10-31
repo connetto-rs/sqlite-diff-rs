@@ -11,7 +11,8 @@
 
 use diesel::query_builder::{QueryFragment, QueryId};
 use diesel::result::{Error as DieselError, QueryResult};
-use diesel_async::{AsyncConnection, RunQueryDsl as _};
+use diesel_async::AsyncConnection;
+use diesel_async::methods::ExecuteDsl;
 
 /// Async counterpart of [`ApplyOps`](super::diesel_query::ApplyOps): run every
 /// op in an iterator against a [`diesel_async::AsyncConnection`].
@@ -95,7 +96,7 @@ where
     {
         let mut total = 0_usize;
         for op in self {
-            total = total.saturating_add(op.execute(conn).await?);
+            total = total.saturating_add(ExecuteDsl::execute(op, conn).await?);
         }
         Ok(total)
     }
