@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.18.1
 
 ### Fixed
 
@@ -22,6 +22,12 @@ The `PgBinary`, pgoutput and wal2json `TypeMap::defaults()` require `S: AsRef<st
 
 `WireType::Vector { dimensions }` declares a vector of single-precision floats, such as pgvector's `vector(n)`, held in sqlite-vec's float32 layout, a `BLOB` of the elements as little-endian IEEE 754 `f32` with no header. The `PgBinary`, pgoutput and wal2json `TypeMap::defaults()` register the new `VectorFloat32Decoder` for it, which decodes pgvector text `[1,2,3]` and pgvector's binary send form to the same blob. A value whose length differs from a declared dimension is refused with the new `DecodeError::VectorDimensionMismatch`, and text or bytes pgvector would not produce, a non-finite element included, with `DecodeError::WrongPayloadKind`. Maxwell registers no vector decoder, since MySQL `VECTOR` has no agreed replica form.
 
+## 0.17.1
+
+### Fixed
+
+`ApplyOpsAsync` runs each op through `diesel_async::methods::ExecuteDsl`, so the `diesel-async` feature builds against diesel_async `main`, whose `RunQueryDsl` covers only the statement types diesel marks with `RunQueryDslSupport`. It still builds against diesel_async 0.9.
+
 ## 0.17.0
 
 ### Breaking
@@ -33,6 +39,12 @@ The `wal2json` and `maxwell` features enable `serde_json/arbitrary_precision`, s
 ### Added
 
 `WireType::ScaledDecimal { scale }` declares a decimal held as an integer count of minor units, `value × 10^scale`, as a `NUMERIC(p,s)` replica column stores it. Every source's `TypeMap::defaults()` registers the new `DecimalMinorUnitsDecoder` for it, which decodes `12.50` at scale 2 to `Integer(1250)` from PostgreSQL binary `numeric`, pgoutput text, and wal2json or Maxwell JSON strings and numbers alike, exponent notation included. A value that is not a whole number of minor units fitting an `i64`, `NaN` and an infinity are refused with the new `DecodeError::UnrepresentableDecimal`, never rounded.
+
+## 0.16.3
+
+### Fixed
+
+`ApplyOpsAsync` runs each op through `diesel_async::methods::ExecuteDsl`, so the `diesel-async` feature builds against diesel_async `main`, whose `RunQueryDsl` covers only the statement types diesel marks with `RunQueryDslSupport`. It still builds against diesel_async 0.9.
 
 ## 0.16.2
 
