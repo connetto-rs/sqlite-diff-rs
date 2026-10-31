@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.1
+
+### Fixed
+
+`ApplyOpsAsync` runs each op through `diesel_async::methods::ExecuteDsl`, so the `diesel-async` feature builds against diesel_async `main`, whose `RunQueryDsl` covers only the statement types diesel marks with `RunQueryDslSupport`. It still builds against diesel_async 0.9.
+
 ## 0.17.0
 
 ### Breaking
