@@ -517,7 +517,7 @@ dependencies = [
 [[package]]
 name = "diesel"
 version = "2.3.14"
-source = "git+https://github.com/diesel-rs/diesel#dde3b22cae58b9f0fd0e7f9e9a2b3dd62377baec"
+source = "git+https://github.com/diesel-rs/diesel#a43c41419c4e38b83da86d7eb844c61db3859b8c"
 dependencies = [
  "bitflags 2.13.2",
  "byteorder",
@@ -535,7 +535,7 @@ dependencies = [
 [[package]]
 name = "diesel-sqlite-session"
 version = "0.1.0"
-source = "git+https://github.com/connetto-rs/diesel-sqlite-session#7cd5f437619ba2b1c6942696607d518e32f4271b"
+source = "git+https://github.com/connetto-rs/diesel-sqlite-session#7e08e927ce99bea2775b8deb9304d2f2f00245eb"
 dependencies = [
  "diesel",
  "libsqlite3-sys",
@@ -546,7 +546,7 @@ dependencies = [
 [[package]]
 name = "diesel_attribute_parser"
 version = "0.1.0"
-source = "git+https://github.com/diesel-rs/diesel#dde3b22cae58b9f0fd0e7f9e9a2b3dd62377baec"
+source = "git+https://github.com/diesel-rs/diesel#a43c41419c4e38b83da86d7eb844c61db3859b8c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -556,7 +556,7 @@ dependencies = [
 [[package]]
 name = "diesel_derives"
 version = "2.3.10"
-source = "git+https://github.com/diesel-rs/diesel#dde3b22cae58b9f0fd0e7f9e9a2b3dd62377baec"
+source = "git+https://github.com/diesel-rs/diesel#a43c41419c4e38b83da86d7eb844c61db3859b8c"
 dependencies = [
  "diesel_attribute_parser",
  "diesel_table_macro_syntax",
@@ -569,7 +569,7 @@ dependencies = [
 [[package]]
 name = "diesel_table_macro_syntax"
 version = "0.3.0"
-source = "git+https://github.com/diesel-rs/diesel#dde3b22cae58b9f0fd0e7f9e9a2b3dd62377baec"
+source = "git+https://github.com/diesel-rs/diesel#a43c41419c4e38b83da86d7eb844c61db3859b8c"
 dependencies = [
  "syn 3.0.8",
 ]
@@ -617,7 +617,7 @@ checksum = "117240f60069e65410b3ae1bb213295bd828f707b5bec6596a1afc8793ce0cbc"
 [[package]]
 name = "dsl_auto_type"
 version = "0.2.0"
-source = "git+https://github.com/diesel-rs/diesel#dde3b22cae58b9f0fd0e7f9e9a2b3dd62377baec"
+source = "git+https://github.com/diesel-rs/diesel#a43c41419c4e38b83da86d7eb844c61db3859b8c"
 dependencies = [
  "darling",
  "either",
