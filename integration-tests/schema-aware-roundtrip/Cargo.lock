@@ -2297,7 +2297,7 @@ dependencies = [
 
 [[package]]
 name = "sqlite-diff-rs"
-version = "0.18.1"
+version = "0.18.2"
 dependencies = [
  "hashbrown 0.17.1",
  "indexmap 2.14.2",
