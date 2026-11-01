@@ -2,6 +2,7 @@
 
 use alloc::borrow::Cow;
 use alloc::string::ToString;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use super::adapter::WireAdapter;
@@ -22,6 +23,7 @@ use super::scalar_helpers::{
     decode_pg_bool_binary, decode_pg_int_binary, decode_pg_json_binary, decode_pg_numeric_binary,
     decode_pg_real_binary, normalize_real, pg_json_binary_text,
 };
+use super::source::{PgBinary, PgBinaryColumn};
 use super::temporal::{IntervalStyle, Temporal, decode_temporal_binary, decode_temporal_text};
 use super::type_map::{TypeMap, TypeMapDefaults};
 use super::vector::{decode_pgvector_binary, decode_pgvector_text, payload_dimensions};
@@ -546,5 +548,48 @@ where
             .with(WireKind::Jsonb, JsonVerbatimDecoder)
             .with(WireKind::Array, ArrayJsonDecoder)
             .with(WireKind::Vector, VectorFloat32Decoder)
+    }
+}
+
+impl<S: 'static, B: 'static> TypeMap<PgWalstream, S, B> {
+    /// Registry for a pgoutput stream started with `binary on`, which hands
+    /// each binary cell to the decoder `binary` registers for its kind, so the
+    /// stream decodes exactly as a [`PgBinary`] snapshot of the same rows.
+    ///
+    /// A text cell is refused with [`DecodeError::WrongPayloadKind`]. Under
+    /// `binary on` PostgreSQL still sends a column as text when its type has
+    /// no binary send function, so register a text decoder for that kind on
+    /// the returned map.
+    #[must_use]
+    pub fn for_binary_stream(binary: TypeMap<PgBinary, S, B>) -> Self {
+        let mut map = Self::new();
+        for (kind, decoder) in binary.entries {
+            map.register(kind, BinaryCell(decoder));
+        }
+        map
+    }
+}
+
+/// A [`PgBinary`] decoder serving the binary cells of a pgoutput stream.
+struct BinaryCell<S, B>(Arc<dyn Decoder<PgBinary, S, B> + Send + Sync>);
+
+impl<S, B> Decoder<PgWalstream, S, B> for BinaryCell<S, B> {
+    fn decode(&self, payload: PgWalstreamColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        let raw = match payload.data {
+            ColumnValue::Null => None,
+            ColumnValue::Binary(bytes) => Some(bytes.as_ref()),
+            ColumnValue::Text(_) => {
+                return Err(DecodeError::WrongPayloadKind {
+                    column: payload.column_name.to_string(),
+                    expected: "binary cell",
+                    actual: "text cell",
+                });
+            }
+        };
+        self.0.decode(PgBinaryColumn {
+            column_name: payload.column_name,
+            wire_type: payload.wire_type,
+            raw,
+        })
     }
 }

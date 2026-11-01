@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+`TypeMap::<PgWalstream, S, B>::for_binary_stream` builds the registry for a pgoutput stream started with `binary on` from a `PgBinary` registry. Each binary cell goes to the `PgBinary` decoder registered for its kind, so a binary stream decodes exactly as a `PgBinary` snapshot of the same rows, and a text cell is refused. A column whose type has no binary send function still arrives as text under `binary on`, and gets its text decoder by registering it for that kind on the returned map.
+
 ## 0.18.1
 
 ### Fixed

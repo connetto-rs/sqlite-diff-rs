@@ -19,7 +19,7 @@ use crate::encoding::Value;
 /// `HashMap::get` per column on the payload's
 /// [`WireType::kind`](super::WireType::kind).
 pub struct TypeMap<Src: WireSource, S, B> {
-    entries: HashMap<WireKind, Arc<dyn Decoder<Src, S, B> + Send + Sync>>,
+    pub(super) entries: HashMap<WireKind, Arc<dyn Decoder<Src, S, B> + Send + Sync>>,
 }
 
 impl<Src: WireSource, S, B> TypeMap<Src, S, B> {
