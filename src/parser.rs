@@ -93,6 +93,20 @@ pub enum ParseError {
         /// Byte position of the pk_flags region in the input.
         position: usize,
     },
+
+    /// A changeset UPDATE record leaves the old value of a primary key column undefined, so it names no row.
+    #[error(
+        "Changeset UPDATE in table {table_name:?} at position {position} leaves the old value \
+         of primary key column {column} undefined"
+    )]
+    UndefinedOldKey {
+        /// The table the record belongs to.
+        table_name: String,
+        /// The primary key column whose old value is undefined.
+        column: usize,
+        /// Byte position of the record's operation code.
+        position: usize,
+    },
 }
 
 /// The detected format marker.
@@ -590,15 +604,22 @@ fn parse_changeset_operation(
             let (old_values, old_len) =
                 parse_values(&data[pos..], base_pos + pos, schema.column_count)?;
             pos += old_len;
+            if let Some(column) = schema
+                .pk_flags
+                .iter()
+                .zip(&old_values)
+                .position(|(&pk_flag, old)| pk_flag > 0 && old.is_none())
+            {
+                return Err(ParseError::UndefinedOldKey {
+                    table_name: schema.name.clone(),
+                    column,
+                    position: base_pos,
+                });
+            }
             let (new_values, new_len) =
                 parse_values(&data[pos..], base_pos + pos, schema.column_count)?;
             pos += new_len;
-            // Extract PK using old values (convert None to Null)
-            let pk_values: Vec<Value<String, Vec<u8>>> = old_values
-                .iter()
-                .map(|v| v.clone().unwrap_or(Value::Null))
-                .collect();
-            let pk = schema.extract_pk(&pk_values);
+            let pk = schema.extract_pk(&old_values);
             let values: UpdateValues = old_values.into_iter().zip(new_values).collect();
             builder.add_operation(schema, pk, Operation::Update { values, indirect });
         }

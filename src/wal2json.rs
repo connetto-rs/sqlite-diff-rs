@@ -423,10 +423,6 @@ where
             value: column_value(col),
         })?;
 
-        // Pair the new value with its old-row value from the identity image
-        // when present, so a primary-key change keeps the old key for the
-        // WHERE clause. Non-key columns absent from the identity fall back to
-        // set_new.
         if let Some(old_col) = identity.and_then(|id| id.iter().find(|c| c.name == col.name)) {
             let old = adapter.decode(Wal2JsonColumn {
                 column_name: col.name.as_str(),
@@ -435,6 +431,11 @@ where
             })?;
             update = update
                 .set(col_idx, old, new)
+                .map_err(|_| ConversionError::ColumnNotFound(col.name.clone()))?;
+        } else if table.primary_key_index(col_idx).is_some() {
+            // A key column absent from the identity did not change.
+            update = update
+                .set(col_idx, new.clone(), new)
                 .map_err(|_| ConversionError::ColumnNotFound(col.name.clone()))?;
         } else {
             update = update
@@ -573,8 +574,6 @@ where
             value,
         })?;
 
-        // Pair with the old value when the column appears in oldkeys (always at least the primary
-        // key), else fall back to set_new.
         if let Some((_, old_value)) = iter_v1_oldkeys(oldkeys).find(|(n, _)| *n == name) {
             let old = adapter.decode(Wal2JsonColumn {
                 column_name: name,
@@ -583,6 +582,11 @@ where
             })?;
             update = update
                 .set(col_idx, old, new)
+                .map_err(|_| ConversionError::ColumnNotFound(name.into()))?;
+        } else if table.primary_key_index(col_idx).is_some() {
+            // A key column absent from oldkeys did not change.
+            update = update
+                .set(col_idx, new.clone(), new)
                 .map_err(|_| ConversionError::ColumnNotFound(name.into()))?;
         } else {
             update = update

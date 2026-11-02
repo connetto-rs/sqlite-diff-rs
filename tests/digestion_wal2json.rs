@@ -1046,6 +1046,30 @@ fn w2j_v2_changeset_update_default_identity_captures_pk_only() {
     }
 }
 
+/// An UPDATE without an identity left its key unchanged, so the new key is also the old one.
+#[test]
+fn w2j_v2_changeset_update_without_identity_keeps_the_key() {
+    let msg = v2_row(
+        Action::Update,
+        "users",
+        Some(all_columns(1, "Alicia", true)),
+        None,
+        None,
+    );
+    let cs: ChangeSet<TestUsersTable, String, Vec<u8>> = ChangeSet::new()
+        .digest(&msg, &test_schema(), &default_adapter())
+        .unwrap();
+    let ops: Vec<_> = cs.iter().collect();
+    let ChangesetOp::Update { values, .. } = &ops[0] else {
+        panic!("expected update, got {:?}", ops[0]);
+    };
+    assert_eq!(
+        values[0],
+        (Some(Value::Integer(1)), Some(Value::Integer(1)))
+    );
+    assert_eq!(values[1], (None, Some(Value::Text("Alicia".to_string()))));
+}
+
 #[test]
 fn w2j_v1_changeset_update_captures_old_pk_from_oldkeys() {
     let schema = test_schema();

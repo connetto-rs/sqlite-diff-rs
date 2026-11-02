@@ -6,8 +6,8 @@ use sqlite_diff_rs::testing::{
     session_changeset_and_patchset, session_changeset_and_patchset_with_setup,
 };
 use sqlite_diff_rs::{
-    ChangeSet, ChangesetFormat, ChangesetOp, ChangesetUpdatePairExt, DiffOps, ParsedDiffSet,
-    SchemaWithPK, TableSchema, Update, Value,
+    ChangeSet, ChangesetFormat, ChangesetOp, ChangesetUpdatePairExt, DiffOps, ParseError,
+    ParsedDiffSet, SchemaWithPK, TableSchema, Update, Value,
 };
 
 fn parsed_changeset(
@@ -161,6 +161,28 @@ fn new_only_pair_is_changed() {
     assert_eq!(
         operation.changed_column_indices().collect::<Vec<usize>>(),
         [1]
+    );
+}
+
+/// SQLite's session writes every key column's old value in a changeset UPDATE,
+/// so a record leaving one undefined names no row and is refused.
+#[test]
+fn update_without_old_key_is_refused() {
+    let mut bytes = vec![b'T', 2, 1, 0, b't', 0, 0x17, 0];
+    // Old record with the key and the value undefined.
+    bytes.extend([0x00, 0x00]);
+    // New record with key 7 and the value undefined.
+    bytes.push(0x01);
+    bytes.extend(7_i64.to_be_bytes());
+    bytes.push(0x00);
+
+    assert_eq!(
+        ParsedDiffSet::try_from(bytes.as_slice()),
+        Err(ParseError::UndefinedOldKey {
+            table_name: "t".to_owned(),
+            column: 0,
+            position: 6,
+        })
     );
 }
 
