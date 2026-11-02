@@ -433,10 +433,8 @@ where
                 .set(col_idx, old, new)
                 .map_err(|_| ConversionError::ColumnNotFound(col.name.clone()))?;
         } else if table.primary_key_index(col_idx).is_some() {
-            // A key column absent from the identity did not change.
-            update = update
-                .set(col_idx, new.clone(), new)
-                .map_err(|_| ConversionError::ColumnNotFound(col.name.clone()))?;
+            // wal2json fills the identity from the replica identity columns, which omit this key.
+            return Err(ConversionError::MissingOldKey(col.name.clone()));
         } else {
             update = update
                 .set_new(col_idx, new)
@@ -584,10 +582,8 @@ where
                 .set(col_idx, old, new)
                 .map_err(|_| ConversionError::ColumnNotFound(name.into()))?;
         } else if table.primary_key_index(col_idx).is_some() {
-            // A key column absent from oldkeys did not change.
-            update = update
-                .set(col_idx, new.clone(), new)
-                .map_err(|_| ConversionError::ColumnNotFound(name.into()))?;
+            // wal2json fills oldkeys from the replica identity columns, which omit this key.
+            return Err(ConversionError::MissingOldKey(name.into()));
         } else {
             update = update
                 .set_new(col_idx, new)

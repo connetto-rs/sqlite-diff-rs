@@ -1046,28 +1046,50 @@ fn w2j_v2_changeset_update_default_identity_captures_pk_only() {
     }
 }
 
-/// An UPDATE without an identity left its key unchanged, so the new key is also the old one.
+/// wal2json fills `identity` from the replica identity columns, so a key column absent from it
+/// has no old value on the wire.
 #[test]
-fn w2j_v2_changeset_update_without_identity_keeps_the_key() {
+fn w2j_v2_changeset_update_without_old_key_is_refused() {
     let msg = v2_row(
         Action::Update,
         "users",
         Some(all_columns(1, "Alicia", true)),
-        None,
+        Some(alloc::vec![bool_col("active", true)]),
         None,
     );
-    let cs: ChangeSet<TestUsersTable, String, Vec<u8>> = ChangeSet::new()
-        .digest(&msg, &test_schema(), &default_adapter())
-        .unwrap();
-    let ops: Vec<_> = cs.iter().collect();
-    let ChangesetOp::Update { values, .. } = &ops[0] else {
-        panic!("expected update, got {:?}", ops[0]);
-    };
+    let result: Result<ChangeSet<TestUsersTable, String, Vec<u8>>, _> =
+        ChangeSet::new().digest(&msg, &test_schema(), &default_adapter());
     assert_eq!(
-        values[0],
-        (Some(Value::Integer(1)), Some(Value::Integer(1)))
+        result.unwrap_err(),
+        ConversionError::MissingOldKey("id".to_string())
     );
-    assert_eq!(values[1], (None, Some(Value::Text("Alicia".to_string()))));
+}
+
+/// wal2json fills `oldkeys` from the replica identity columns, so a key column absent from it
+/// has no old value on the wire.
+#[test]
+fn w2j_v1_changeset_update_without_old_key_is_refused() {
+    let change = ChangeV1::Update {
+        schema: Some("public".to_string()),
+        table: "users".to_string(),
+        columns: v1_arrays(
+            &["id", "name", "active"],
+            &["integer", "text", "boolean"],
+            all_values(1, "Alicia", true),
+        ),
+        pk: None,
+        oldkeys: v1_oldkeys(
+            &["active"],
+            &["boolean"],
+            alloc::vec![serde_json::Value::Bool(true)],
+        ),
+    };
+    let result: Result<ChangeSet<TestUsersTable, String, Vec<u8>>, _> =
+        ChangeSet::new().digest(&change, &test_schema(), &default_adapter());
+    assert_eq!(
+        result.unwrap_err(),
+        ConversionError::MissingOldKey("id".to_string())
+    );
 }
 
 #[test]
