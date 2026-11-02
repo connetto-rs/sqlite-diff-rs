@@ -886,11 +886,12 @@ pub fn run_crash_dir_regression(
 /// part overflows `i64`, `Array` with elements decoding to an integer, a
 /// boolean integer, a real, text and a blob JSON cannot hold, and `Vector`
 /// without and with a dimension.
-const ALL_WIRE_TYPES: [crate::wire::WireType; 24] = [
+const ALL_WIRE_TYPES: [crate::wire::WireType; 25] = [
     crate::wire::WireType::Bool,
     crate::wire::WireType::Int,
     crate::wire::WireType::Real,
     crate::wire::WireType::Text,
+    crate::wire::WireType::Opaque,
     crate::wire::WireType::Bytes,
     crate::wire::WireType::Uuid,
     crate::wire::WireType::Decimal,

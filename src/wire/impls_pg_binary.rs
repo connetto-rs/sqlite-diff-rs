@@ -249,6 +249,8 @@ where
     B: From<Vec<u8>>,
 {
     fn defaults() -> TypeMap<Self, S, B> {
+        // `WireKind::Opaque` stays unregistered, since a type's send bytes
+        // do not give its text output.
         TypeMap::new()
             .with(WireKind::Bool, BoolDecoder)
             .with(WireKind::Int, IntDecoder)

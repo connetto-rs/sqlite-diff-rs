@@ -29,8 +29,18 @@ pub enum WireType {
     Int,
     /// Floating-point.
     Real,
-    /// UTF-8 text.
+    /// UTF-8 text. On a binary source, declare it only for a type whose
+    /// binary form is that same text, such as PostgreSQL's `text`,
+    /// `varchar` or an enum, and [`Opaque`](Self::Opaque) for any other.
     Text,
+    /// A type's text output, held verbatim as text, for a type no other
+    /// variant describes, such as `inet`, `point`, a range or an extension
+    /// type.
+    ///
+    /// The defaults decode only its text form. Its binary form, a pgoutput
+    /// binary cell or a `PgBinary` field, is refused, since a client cannot
+    /// rebuild the type's text output from its send bytes.
+    Opaque,
     /// Raw bytes.
     Bytes,
     /// UUID.
@@ -142,6 +152,7 @@ impl WireType {
             Self::Int => WireKind::Int,
             Self::Real => WireKind::Real,
             Self::Text => WireKind::Text,
+            Self::Opaque => WireKind::Opaque,
             Self::Bytes => WireKind::Bytes,
             Self::Uuid => WireKind::Uuid,
             Self::Decimal => WireKind::Decimal,
@@ -178,6 +189,8 @@ pub enum WireKind {
     Real,
     /// [`WireType::Text`].
     Text,
+    /// [`WireType::Opaque`].
+    Opaque,
     /// [`WireType::Bytes`].
     Bytes,
     /// [`WireType::Uuid`].
