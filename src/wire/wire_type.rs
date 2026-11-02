@@ -33,14 +33,6 @@ pub enum WireType {
     /// binary form is that same text, such as PostgreSQL's `text`,
     /// `varchar` or an enum, and [`Opaque`](Self::Opaque) for any other.
     Text,
-    /// A type's text output, held verbatim as text, for a type no other
-    /// variant describes, such as `inet`, `point`, a range or an extension
-    /// type.
-    ///
-    /// The defaults decode only its text form. Its binary form, a pgoutput
-    /// binary cell or a `PgBinary` field, is refused, since a client cannot
-    /// rebuild the type's text output from its send bytes.
-    Opaque,
     /// Raw bytes.
     Bytes,
     /// UUID.
@@ -83,6 +75,14 @@ pub enum WireType {
         /// declares no dimension and any length is accepted.
         dimensions: Option<u32>,
     },
+    /// A type's text output, held verbatim as text, for a type no other
+    /// variant describes, such as `inet`, `point`, a range or an extension
+    /// type.
+    ///
+    /// The defaults decode only its text form. Its binary form, a pgoutput
+    /// binary cell or a `PgBinary` field, is refused, since a client cannot
+    /// rebuild the type's text output from its send bytes.
+    Opaque,
 }
 
 /// Element type of a [`WireType::Array`], one of the [`WireType`]s
@@ -152,7 +152,6 @@ impl WireType {
             Self::Int => WireKind::Int,
             Self::Real => WireKind::Real,
             Self::Text => WireKind::Text,
-            Self::Opaque => WireKind::Opaque,
             Self::Bytes => WireKind::Bytes,
             Self::Uuid => WireKind::Uuid,
             Self::Decimal => WireKind::Decimal,
@@ -166,6 +165,7 @@ impl WireType {
             Self::Jsonb => WireKind::Jsonb,
             Self::Array { .. } => WireKind::Array,
             Self::Vector { .. } => WireKind::Vector,
+            Self::Opaque => WireKind::Opaque,
         }
     }
 }
@@ -189,8 +189,6 @@ pub enum WireKind {
     Real,
     /// [`WireType::Text`].
     Text,
-    /// [`WireType::Opaque`].
-    Opaque,
     /// [`WireType::Bytes`].
     Bytes,
     /// [`WireType::Uuid`].
@@ -217,4 +215,6 @@ pub enum WireKind {
     Array,
     /// [`WireType::Vector`] of any dimension.
     Vector,
+    /// [`WireType::Opaque`].
+    Opaque,
 }
