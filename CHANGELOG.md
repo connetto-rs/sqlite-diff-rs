@@ -10,6 +10,10 @@ Digesting a wal2json UPDATE into a changeset refuses one whose `identity` or `ol
 
 The `testing` feature depends on `rusqlite` 0.41, whose bundled SQLite 3.54.1 is the reference the parity helpers compare against. SQLite before 3.54.0 hashed an integral value in a REAL primary key column as an INTEGER on INSERT, so its row order differed from the REAL it writes and from the builder's. The minimum supported Rust version is 1.89, which `rusqlite` 0.41 requires.
 
+### Fixed
+
+`differential_testing::run_differential_test` attaches SQLite's session to each schema's table in schema order, the table order registering the schemas gives the builder. It attached every table at once, so SQLite ordered tables by first change and a statement on a later schema's table before one on an earlier schema's reported a mismatch that was not there.
+
 ## 0.19.0
 
 ### Breaking

@@ -11,11 +11,12 @@
 extern crate std;
 
 use crate::schema::SimpleTable;
-use crate::testing::{byte_diff_report, session_changeset_and_patchset};
-use crate::{DiffSetBuilder, PatchsetFormat};
+use crate::testing::byte_diff_report;
+use crate::{DiffSetBuilder, DynTable, PatchsetFormat};
 use alloc::string::String;
 use alloc::vec::Vec;
 use rusqlite::fallible_iterator::FallibleIterator;
+use rusqlite::session::Session;
 use rusqlite::{Batch, Connection, ErrorCode};
 
 /// Run a differential test comparing our patchset builder output against
@@ -27,8 +28,9 @@ use rusqlite::{Batch, Connection, ErrorCode};
 /// string holding one or more statements.
 ///
 /// Schemas are registered in our builder and DML is digested via
-/// [`DiffSetBuilder::digest_sql`]. The same statements run in rusqlite with
-/// session tracking, and the patchset bytes are compared byte for byte.
+/// [`DiffSetBuilder::digest_sql`]. The same statements run in rusqlite with a
+/// session attached to each schema's table in schema order, the table order
+/// registration gives our builder, and the patchset bytes are compared byte for byte.
 ///
 /// Returns `false` without comparing when a statement changes no row or a
 /// constraint refuses it. `digest_sql` records the row a `WHERE` names without
@@ -67,22 +69,36 @@ pub fn run_differential_test(
 
     let our_patchset = our_patchset_builder.build();
 
-    // Build the full statement list for rusqlite
-    let mut all_sqls: Vec<&str> = Vec::new();
-    all_sqls.extend_from_slice(create_sqls);
-    all_sqls.extend_from_slice(dml_sqls);
-
-    let (_rusqlite_changeset, rusqlite_patchset) = session_changeset_and_patchset(&all_sqls);
+    let sqlite_patchset = sqlite_patchset(schemas, create_sqls, dml_sqls);
 
     // Byte-for-byte comparison (patchset only)
-    let ps_report = byte_diff_report("patchset", &rusqlite_patchset, &our_patchset);
+    let ps_report = byte_diff_report("patchset", &sqlite_patchset, &our_patchset);
 
     assert!(
-        rusqlite_patchset == our_patchset,
-        "Patchset bit parity failure in differential test!\n\n{ps_report}\n\nSQL:\n{}",
-        all_sqls.join("\n")
+        sqlite_patchset == our_patchset,
+        "Patchset bit parity failure in differential test!\n\n{ps_report}\n\nSQL:\n{}\n{}",
+        create_sqls.join("\n"),
+        dml_sqls.join("\n")
     );
     true
+}
+
+/// The patchset SQLite's session records for `dml_sqls`, with each schema's table attached in order.
+fn sqlite_patchset(schemas: &[SimpleTable], create_sqls: &[&str], dml_sqls: &[&str]) -> Vec<u8> {
+    let conn = Connection::open_in_memory().unwrap();
+    for &sql in create_sqls {
+        conn.execute_batch(sql).unwrap();
+    }
+    let mut session = Session::new(&conn).unwrap();
+    for schema in schemas {
+        session.attach(Some(schema.name())).unwrap();
+    }
+    for &sql in dml_sqls {
+        conn.execute_batch(sql).unwrap();
+    }
+    let mut patchset = Vec::new();
+    session.patchset_strm(&mut patchset).unwrap();
+    patchset
 }
 
 /// Whether SQLite runs every DML statement and each one changes a row.
