@@ -19,7 +19,7 @@ use crate::encoding::Value;
 /// `HashMap::get` per column on the payload's
 /// [`WireType::kind`](super::WireType::kind).
 pub struct TypeMap<Src: WireSource, S, B> {
-    pub(super) entries: HashMap<WireKind, Arc<dyn Decoder<Src, S, B> + Send + Sync>>,
+    entries: HashMap<WireKind, Arc<dyn Decoder<Src, S, B> + Send + Sync>>,
 }
 
 impl<Src: WireSource, S, B> TypeMap<Src, S, B> {
@@ -62,6 +62,12 @@ impl<Src: WireSource, S, B> TypeMap<Src, S, B> {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// True when a decoder is registered for `kind`.
+    #[cfg(feature = "pg-walstream")]
+    pub(crate) fn contains(&self, kind: WireKind) -> bool {
+        self.entries.contains_key(&kind)
     }
 }
 

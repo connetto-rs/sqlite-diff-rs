@@ -14,10 +14,12 @@ use crate::builders::{
     ChangeDelete, DeleteArg, DiffOps, DiffSetBuilder, Format, Insert, PatchDelete, PatchsetFormat,
     Update,
 };
+use crate::encoding::Value;
 use crate::schema::NamedColumns;
 use crate::wire::{
-    Sealed, WireAdapter, WireColumnItem, WireSource, WireType, build_changeset_delete,
-    build_insert, build_patch_delete, build_patchset_update, resolve_table,
+    DecodeError, PgBinary, PgBinaryColumn, Sealed, TypeMap, WireAdapter, WireColumnItem,
+    WireSource, WireType, build_changeset_delete, build_insert, build_patch_delete,
+    build_patchset_update, resolve_table,
 };
 use core::fmt::Debug;
 use core::hash::Hash;
@@ -64,15 +66,52 @@ impl PgWalstreamColumn<'_> {
     ///
     /// # Errors
     ///
-    /// Propagates the decoder's [`DecodeError`](crate::wire::DecodeError).
-    pub fn decoded_by<D, S, B>(
-        self,
-        decoder: &D,
-    ) -> Result<crate::encoding::Value<S, B>, crate::wire::DecodeError>
+    /// Propagates the decoder's [`DecodeError`].
+    pub fn decoded_by<D, S, B>(self, decoder: &D) -> Result<Value<S, B>, DecodeError>
     where
         D: crate::wire::Decoder<PgWalstream, S, B>,
     {
         decoder.decode(self)
+    }
+}
+
+/// Decoder registry for a pgoutput stream started with `binary on`.
+///
+/// PostgreSQL sends each column of such a stream in binary when its type
+/// has a binary send function and as text otherwise, so one
+/// [`WireKind`](crate::wire::WireKind) can carry both formats in one row.
+/// Each cell decodes through the registry of its own format, a binary cell
+/// through `binary`, exactly as a [`PgBinary`] snapshot of the same row
+/// does, and a text cell through `text`. An array's elements decode
+/// through the registry of the array's format. A NULL carries no format and
+/// decodes through `binary` when that has a decoder for its kind and
+/// through `text` otherwise.
+pub struct PgBinaryStream<S, B> {
+    binary: TypeMap<PgBinary, S, B>,
+    text: TypeMap<PgWalstream, S, B>,
+}
+
+impl<S, B> PgBinaryStream<S, B> {
+    /// Registry decoding binary cells through `binary` and text cells
+    /// through `text`.
+    #[must_use]
+    pub fn new(binary: TypeMap<PgBinary, S, B>, text: TypeMap<PgWalstream, S, B>) -> Self {
+        Self { binary, text }
+    }
+}
+
+impl<S, B> WireAdapter<PgWalstream, S, B> for PgBinaryStream<S, B> {
+    fn decode(&self, payload: PgWalstreamColumn<'_>) -> Result<Value<S, B>, DecodeError> {
+        let raw = match payload.data {
+            ColumnValue::Binary(bytes) => Some(bytes.as_ref()),
+            ColumnValue::Null if self.binary.contains(payload.wire_type.kind()) => None,
+            ColumnValue::Null | ColumnValue::Text(_) => return self.text.decode(payload),
+        };
+        self.binary.decode(PgBinaryColumn {
+            column_name: payload.column_name,
+            wire_type: payload.wire_type,
+            raw,
+        })
     }
 }
 

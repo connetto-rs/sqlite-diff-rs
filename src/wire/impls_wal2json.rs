@@ -351,6 +351,7 @@ where
             .with(WireKind::Int, IntDecoder)
             .with(WireKind::Real, RealDecoder)
             .with(WireKind::Text, TextDecoder)
+            .with(WireKind::Opaque, TextDecoder)
             .with(WireKind::Bytes, PgByteaTextModeDecoder)
             .with(WireKind::Uuid, UuidText36Decoder)
             .with(WireKind::Decimal, DecimalTextDecoder)
