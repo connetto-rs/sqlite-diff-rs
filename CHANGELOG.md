@@ -6,7 +6,7 @@
 
 `PgBinaryStream` replaces `TypeMap::<PgWalstream, S, B>::for_binary_stream` as the decoder registry for a pgoutput stream started with `binary on`. Under `binary on` PostgreSQL sends a column in binary when its type has a binary send function and as text otherwise, so one kind can carry both formats in one row, and no single decoder per kind read both. `PgBinaryStream::new(binary, text)` takes a `PgBinary` registry and a `PgWalstream` registry and decodes each cell through the registry of its own format, a binary cell exactly as a `PgBinary` snapshot of the same row and a text cell as a text stream. An array's elements decode through the registry of the array's format, so a binary array honours the caller's `PgBinary` registrations for its elements.
 
-The `pg-walstream` feature depends on `pg_walstream` 0.10, whose `ChangeEvent`, `EventType`, `ColumnValue` and `RowData` the `pg_walstream` module re-exports, so a consumer digesting its own `pg_walstream` events moves to 0.10 with it.
+The `pg-walstream` feature depends on `pg_walstream` 0.10, whose `ChangeEvent`, `EventType`, `ColumnValue` and `RowData` the `pg_walstream` module re-exports and whose `LogicalReplicationMessage`, `ColumnData`, `ColumnInfo` and `TupleData` the `pg_walstream_reverse` module re-exports, so a consumer digesting its own `pg_walstream` events or encoding the messages `pg_walstream_reverse` builds moves to 0.10 with it. The re-exported `ChangeEvent` carries an `xid: Option<u32>` field, set for a change read inside a streamed transaction, so a struct literal must set it, and its bespoke `encode` method is gone in favour of serde or `pg_walstream::encode_message`.
 
 ### Added
 
