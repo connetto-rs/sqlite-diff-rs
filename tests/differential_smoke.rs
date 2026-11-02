@@ -44,6 +44,24 @@ fn differential_multi_table_byte_parity() {
     ));
 }
 
+/// The schemas fix the table order, as attaching each table does, whichever table changes first.
+#[test]
+fn differential_orders_tables_by_schema() {
+    let t0 = SimpleTable::with_rowid_alias("t0", &[("a", "INTEGER")], 0);
+    let t1 = SimpleTable::with_rowid_alias("t1", &[("a", "INTEGER")], 0);
+    assert!(run_differential_test(
+        &[t0, t1],
+        &[
+            "CREATE TABLE t0 (a INTEGER PRIMARY KEY)",
+            "CREATE TABLE t1 (a INTEGER PRIMARY KEY)",
+        ],
+        &[
+            "INSERT INTO t1 (a) VALUES (1)",
+            "INSERT INTO t0 (a) VALUES (1)"
+        ],
+    ));
+}
+
 #[test]
 fn differential_runs_every_statement_of_a_multi_statement_string() {
     let users = SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0);
