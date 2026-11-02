@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.20.0
+
+### Breaking
+
+Parsing a changeset refuses an UPDATE record whose old record leaves a primary key column undefined, with `ParseError::UndefinedOldKey`. The old record names the row the UPDATE changes, SQLite's session always writes every key column into it, and reversing such a record twice did not give it back. For the same reason `Update::<_, ChangesetFormat, _, _>::set_new` refuses a primary key column with `Error::UndefinedOldKey`, and `set` or `set_old` records a key column.
+
+Digesting a wal2json UPDATE into a changeset refuses one whose `identity` or `oldkeys` omits a primary key column, with `ConversionError::MissingOldKey`. wal2json fills both from the replica identity columns, so the old key is not on the wire, and the UPDATE it built named no row.
+
+The `testing` feature depends on `rusqlite` 0.41, whose bundled SQLite 3.54.1 is the reference the parity helpers compare against. SQLite before 3.54.0 hashed an integral value in a REAL primary key column as an INTEGER on INSERT, so its row order differed from the REAL it writes and from the builder's. The minimum supported Rust version is 1.89, which `rusqlite` 0.41 requires.
+
 ## 0.19.0
 
 ### Breaking

@@ -118,8 +118,7 @@ fn binary_blob(bytes: &[u8]) -> Option<(Vec<u8>, usize)> {
         return None;
     }
     let mut blob = Vec::with_capacity(elements.len());
-    for element in elements.chunks_exact(4) {
-        let bits = [element[0], element[1], element[2], element[3]];
+    for &bits in elements.as_chunks::<4>().0 {
         push_finite(&mut blob, f32::from_be_bytes(bits))?;
     }
     Some((blob, count))

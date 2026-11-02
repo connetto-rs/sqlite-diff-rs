@@ -349,7 +349,7 @@ Empty `ParsedDiffSet` values are considered equal regardless of format variant
 
 ### `src/errors.rs` — Error types
 
-Single error type: `Error::ColumnIndexOutOfBounds(usize, usize)`.
+Single error type: `Error`, with `ColumnIndexOutOfBounds(usize, usize)` and `UndefinedOldKey(usize)` for a changeset `set_new` on a primary key column.
 
 Parse errors are in `parser::ParseError` and `builders::sql::ParseError`.
 

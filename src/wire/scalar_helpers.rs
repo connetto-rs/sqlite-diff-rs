@@ -190,8 +190,10 @@ impl<'a> PgNumeric<'a> {
     /// The base-10000 digits, most significant first.
     pub(crate) fn digits(&self) -> impl Iterator<Item = u16> + '_ {
         self.digits
-            .chunks_exact(2)
-            .map(|d| u16::from_be_bytes([d[0], d[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&d| u16::from_be_bytes(d))
     }
 
     /// The text `numeric_out` prints, which is what a `numeric` carries over

@@ -10,7 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 sqlite-diff-rs = { path = "../", features = ["testing", "wal2json", "pg-walstream", "maxwell"] }
-rusqlite = { version = "0.40", features = [
+rusqlite = { version = "0.41", features = [
 	"bundled",
 	"session",
 ] }

@@ -331,6 +331,17 @@ fn bit_parity_hash_order_reversed_integer_key() {
     );
 }
 
+/// An integral value in a REAL key column is hashed as the REAL it is stored as.
+#[test]
+fn bit_parity_hash_order_integral_real_key() {
+    let schema = SimpleTable::new("t", &[("a", "REAL")], &[0]);
+    assert_hash_order_insert_parity(
+        &schema,
+        "CREATE TABLE t(a REAL PRIMARY KEY)",
+        &[vec![Value::Real(1.0)], vec![Value::Real(2.0)]],
+    );
+}
+
 #[test]
 fn bit_parity_hash_order_mixed_key_permutations() {
     let columns = [

@@ -45,6 +45,10 @@ pub enum ConversionError {
     #[error("Old data not available (check replica identity setting)")]
     MissingOldData,
 
+    /// The event carries no old value for this primary key column, which a changeset UPDATE needs to name its row.
+    #[error("No old value for primary key column '{0}' (check replica identity setting)")]
+    MissingOldKey(String),
+
     /// A JSON value type is not supported for conversion.
     #[error("Unsupported value type for column '{0}'")]
     UnsupportedType(String),

@@ -56,9 +56,9 @@ fn decode_hex(hex: &[u8]) -> Result<Vec<u8>, usize> {
         return Err(hex.len().saturating_sub(1));
     }
     let mut out = Vec::with_capacity(hex.len() / 2);
-    for (i, chunk) in hex.chunks_exact(2).enumerate() {
-        let hi = hex_nibble(chunk[0]).ok_or(i * 2)?;
-        let lo = hex_nibble(chunk[1]).ok_or(i * 2 + 1)?;
+    for (i, &[high, low]) in hex.as_chunks::<2>().0.iter().enumerate() {
+        let hi = hex_nibble(high).ok_or(i * 2)?;
+        let lo = hex_nibble(low).ok_or(i * 2 + 1)?;
         out.push((hi << 4) | lo);
     }
     Ok(out)

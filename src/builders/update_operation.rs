@@ -138,7 +138,9 @@ impl<T: DynTable, S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>>
     /// Sets only the new value for a column, leaving old as undefined.
     ///
     /// This is useful when the old value is not known (e.g., when parsing SQL
-    /// UPDATE statements where only the new value is specified).
+    /// UPDATE statements where only the new value is specified). A primary key
+    /// column needs its old value to name the row, so use [`set`](Self::set) or
+    /// [`set_old`](Self::set_old) for it.
     ///
     /// # Arguments
     ///
@@ -148,6 +150,7 @@ impl<T: DynTable, S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>>
     /// # Errors
     ///
     /// * `ColumnIndexOutOfBounds` - If the column index is out of bounds.
+    /// * `UndefinedOldKey` - If the column is part of the primary key.
     ///
     /// # Example
     ///
@@ -167,12 +170,18 @@ impl<T: DynTable, S: Clone + Debug + AsRef<str>, B: Clone + Debug + AsRef<[u8]>>
         mut self,
         col_idx: usize,
         new: impl Into<Value<S, B>>,
-    ) -> Result<Self, crate::errors::Error> {
+    ) -> Result<Self, crate::errors::Error>
+    where
+        T: SchemaWithPK,
+    {
         if col_idx >= self.values.len() {
             return Err(crate::errors::Error::ColumnIndexOutOfBounds(
                 col_idx,
                 self.values.len(),
             ));
+        }
+        if self.table.primary_key_index(col_idx).is_some() {
+            return Err(crate::errors::Error::UndefinedOldKey(col_idx));
         }
 
         self.values[col_idx] = (None, Some(new.into()));
@@ -327,6 +336,14 @@ mod tests {
 
     fn users() -> SimpleTable {
         SimpleTable::with_rowid_alias("users", &[("id", "INTEGER"), ("name", "TEXT")], 0)
+    }
+
+    #[test]
+    fn test_changeset_update_set_new_refuses_key_column() {
+        let err = Update::<_, ChangesetFormat, String, Vec<u8>>::from(users())
+            .set_new(0, 2i64)
+            .unwrap_err();
+        assert_eq!(err, Error::UndefinedOldKey(0));
     }
 
     #[test]
