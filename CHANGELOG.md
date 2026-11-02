@@ -6,6 +6,8 @@
 
 `PgBinaryStream` replaces `TypeMap::<PgWalstream, S, B>::for_binary_stream` as the decoder registry for a pgoutput stream started with `binary on`. Under `binary on` PostgreSQL sends a column in binary when its type has a binary send function and as text otherwise, so one kind can carry both formats in one row, and no single decoder per kind read both. `PgBinaryStream::new(binary, text)` takes a `PgBinary` registry and a `PgWalstream` registry and decodes each cell through the registry of its own format, a binary cell exactly as a `PgBinary` snapshot of the same row and a text cell as a text stream. An array's elements decode through the registry of the array's format, so a binary array honours the caller's `PgBinary` registrations for its elements.
 
+The `pg-walstream` feature depends on `pg_walstream` 0.10, whose `ChangeEvent`, `EventType`, `ColumnValue` and `RowData` the `pg_walstream` module re-exports, so a consumer digesting its own `pg_walstream` events moves to 0.10 with it.
+
 ### Added
 
 `WireType::Opaque` declares a column held as its type's text output, for a type no other variant describes, such as `inet`, `point`, a range or an extension type. The pgoutput, wal2json and Maxwell `TypeMap::defaults()` register `TextDecoder` for it. The `PgBinary` defaults register nothing, since a client cannot rebuild a type's text output from its send bytes, so a binary cell of it on a `PgBinaryStream` is refused with `DecodeError::NoDecoderForType` where a `WireType::Text` column would store the send bytes as text whenever they happen to be valid UTF-8.

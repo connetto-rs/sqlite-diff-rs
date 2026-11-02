@@ -62,7 +62,7 @@ serde = { version = "1", default-features = false, features = ["derive", "alloc"
 serde_json = { version = "1.0.120", default-features = false, features = ["alloc", "arbitrary_precision"], optional = true }
 wal2json-events = { version = "0.1.0", default-features = false, optional = true }
 maxwell-cdc = { version = "0.1.0", default-features = false, optional = true }
-pg_walstream = { version = "0.9", default-features = false, optional = true }
+pg_walstream = { version = "0.10", default-features = false, optional = true }
 diesel = { version = "2", default-features = false, optional = true }
 diesel-async = { version = "0.9", default-features = false, optional = true }
 
