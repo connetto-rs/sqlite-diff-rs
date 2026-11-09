@@ -4,7 +4,7 @@ This directory contains harnesses for fuzz testing the `sqlite-diff-rs` crate.
 
 ## What is Fuzzing?
 
-[Fuzzing](https://rust-fuzz.github.io/book/) is an automated testing technique that feeds random, invalid, or unexpected inputs into your program to find bugs, crashes, or security vulnerabilities. We use [libFuzzer](https://llvm.org/docs/LibFuzzer.html) through [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz), and [ClusterFuzzLite](https://google.github.io/clusterfuzzlite/) runs the same targets weekly on `main`.
+[Fuzzing](https://rust-fuzz.github.io/book/) is an automated testing technique that feeds random, invalid, or unexpected inputs into your program to find bugs, crashes, or security vulnerabilities. We use [libFuzzer](https://llvm.org/docs/LibFuzzer.html) through [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz).
 
 ## Getting Started
 
@@ -34,7 +34,7 @@ This directory contains harnesses for fuzz testing the `sqlite-diff-rs` crate.
 
 ## Seed Corpus
 
-Every target has a seed corpus in `fuzz/seeds/<target>/`, one input per file, and the ClusterFuzzLite build fails for a target without one. `roundtrip` and `reverse_idempotent` start from real rusqlite session changesets and patchsets, and the `wire_*` targets start from one valid value per wire type. `apply_roundtrip`, `sql_roundtrip` and `differential` decode their input through `arbitrary`, so their seeds are fuzzer-grown inputs reduced by libFuzzer's `-set_cover_merge=1` to the smallest set that keeps the same coverage. Pass the seeds as a second corpus directory to start a local run from them:
+Every target has a seed corpus in `fuzz/seeds/<target>/`, one input per file. `roundtrip` and `reverse_idempotent` start from real rusqlite session changesets and patchsets, and the `wire_*` targets start from one valid value per wire type. `apply_roundtrip`, `sql_roundtrip` and `differential` decode their input through `arbitrary`, so their seeds are fuzzer-grown inputs reduced by libFuzzer's `-set_cover_merge=1` to the smallest set that keeps the same coverage. Pass the seeds as a second corpus directory to start a local run from them:
 
 ```bash
 mkdir -p fuzz/corpus/roundtrip

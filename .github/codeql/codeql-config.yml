@@ -1,7 +1,0 @@
-name: sqlite-diff-rs
-
-threat-models: local
-
-# Test assertion messages print decoded values, which the Rust queries read as secrets written to a log.
-paths-ignore:
-  - tests/**
