@@ -414,7 +414,7 @@ cargo test
 
 ## B5. Fuzz Harnesses (`fuzz/`)
 
-Uses [libFuzzer](https://llvm.org/docs/LibFuzzer.html) via `cargo-fuzz`, run by ClusterFuzzLite weekly on `main`.
+Uses [libFuzzer](https://llvm.org/docs/LibFuzzer.html) via `cargo-fuzz`.
 
 | Harness | Input | What it tests |
 |---------|-------|---------------|
