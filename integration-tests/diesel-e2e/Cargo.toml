@@ -32,7 +32,7 @@ diesel = { version = "2", default-features = false, features = [
 	"mysql",
 	"sqlite",
 ] }
-diesel-async = { version = "0.9", default-features = false, features = [
+diesel-async = { version = "0.10", default-features = false, features = [
 	"postgres",
 	"mysql",
 	"sqlite",

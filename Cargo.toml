@@ -64,7 +64,7 @@ wal2json-events = { version = "0.1.0", default-features = false, optional = true
 maxwell-cdc = { version = "0.1.0", default-features = false, optional = true }
 pg_walstream = { version = "0.10", default-features = false, optional = true }
 diesel = { version = "2", default-features = false, optional = true }
-diesel-async = { version = "0.9", default-features = false, optional = true }
+diesel-async = { version = "0.10", default-features = false, optional = true }
 
 [dev-dependencies]
 rusqlite = { version = "0.41", features = ["bundled", "session", "backup"] }
