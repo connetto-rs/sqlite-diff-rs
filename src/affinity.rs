@@ -3,6 +3,8 @@
 
 mod float;
 
+pub(crate) use float::NumberText;
+
 use crate::encoding::Value;
 
 /// The type affinity SQLite derives from a column's declared type.
