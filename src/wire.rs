@@ -30,6 +30,7 @@ mod bytes_helpers;
 mod conversion_error;
 mod decoder;
 mod error;
+mod float4out;
 #[cfg(any(feature = "maxwell", feature = "wal2json"))]
 mod json_decoders;
 #[cfg(any(feature = "wal2json", feature = "maxwell", feature = "pg-walstream"))]

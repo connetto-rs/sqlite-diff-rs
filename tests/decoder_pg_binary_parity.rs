@@ -22,7 +22,7 @@ use alloc::vec::Vec;
 use bytes::Bytes;
 use sqlite_diff_rs::pg_walstream::{ColumnValue, PgWalstream, PgWalstreamColumn};
 use sqlite_diff_rs::{
-    BoolDecoder, DecodeError, Decoder, IntDecoder, IntervalPostgresDecoder, PgBinary,
+    ArrayElement, BoolDecoder, DecodeError, Decoder, IntDecoder, IntervalPostgresDecoder, PgBinary,
     PgBinaryColumn, PgByteaBinaryDecoder, RealDecoder, TextDecoder, TypeMap, UuidBlob16Decoder,
     Value, WireAdapter, WireKind, WireType,
 };
@@ -200,16 +200,33 @@ impl Sources {
 
     fn assert_parity(&self, wire_type: WireType, fixtures: &[Fixture]) {
         for &(text, hex_bytes, replica) in fixtures {
-            for (path, got) in ["PgBinary", "pgoutput text", "pgoutput binary"]
-                .into_iter()
-                .zip(self.decode_all(wire_type, text, hex_bytes))
-            {
-                assert_eq!(
-                    got,
-                    Ok(Value::Text(String::from(replica))),
-                    "{wire_type:?} {text:?} through {path}"
-                );
-            }
+            self.assert_decodes_to(
+                wire_type,
+                text,
+                hex_bytes,
+                &Value::Text(String::from(replica)),
+            );
+        }
+    }
+
+    /// Assert `PgBinary`, pgoutput text and pgoutput binary all decode the
+    /// value with pgoutput text `text` and send form `hex_bytes` to `expected`.
+    fn assert_decodes_to(
+        &self,
+        wire_type: WireType,
+        text: &str,
+        hex_bytes: &str,
+        expected: &Value<String, Vec<u8>>,
+    ) {
+        for (path, got) in ["PgBinary", "pgoutput text", "pgoutput binary"]
+            .into_iter()
+            .zip(self.decode_all(wire_type, text, hex_bytes))
+        {
+            assert_eq!(
+                got.as_ref(),
+                Ok(expected),
+                "{wire_type:?} {text:?} through {path}"
+            );
         }
     }
 
@@ -234,6 +251,47 @@ fn assert_parity(wire_type: WireType, fixtures: &[Fixture]) {
 
 fn assert_unrepresentable(wire_type: WireType, fixtures: &[(&str, &str)]) {
     Sources::defaults().assert_unrepresentable(wire_type, fixtures);
+}
+
+/// `real` lands on the double nearest the decimal `float4out` prints, so a
+/// `float4send` field stores what the pgoutput text stores. Fixtures are
+/// PostgreSQL 16's `float4out` text and `float4send` bytes.
+#[test]
+fn real_is_the_double_nearest_its_text() {
+    let sources = Sources::defaults();
+    for (text, hex_bytes, expected) in [
+        ("0.1", "3dcccccd", Value::Real(0.1)),
+        ("0.3", "3e99999a", Value::Real(0.3)),
+        ("123456.79", "47f12065", Value::Real(123_456.79)),
+        ("0.00024414062", "39800000", Value::Real(0.000_244_140_62)),
+        ("-4.3870232e+07", "cc275a06", Value::Real(-43_870_232.0)),
+        ("3.4028235e+38", "7f7fffff", Value::Real(3.402_823_5e38)),
+        ("1e-45", "00000001", Value::Real(1e-45)),
+        ("1.1754944e-38", "00800000", Value::Real(1.175_494_4e-38)),
+        ("-2.5e-07", "b48637bd", Value::Real(-2.5e-7)),
+        ("1.6777216e+07", "4b800000", Value::Real(16_777_216.0)),
+        ("1.5", "3fc00000", Value::Real(1.5)),
+        ("-0", "80000000", Value::Real(-0.0)),
+        ("Infinity", "7f800000", Value::Real(f64::INFINITY)),
+        ("NaN", "7fc00000", Value::Null),
+        ("0.1", "3fb999999999999a", Value::Real(0.1)),
+    ] {
+        sources.assert_decodes_to(WireType::Real, text, hex_bytes, &expected);
+    }
+}
+
+#[test]
+fn real_array_elements_are_the_doubles_nearest_their_text() {
+    assert_parity(
+        WireType::Array {
+            element: ArrayElement::Real,
+        },
+        &[(
+            "{0.1,1.5}",
+            "0000000100000000000002bc0000000200000001000000043dcccccd000000043fc00000",
+            "[0.1,1.5]",
+        )],
+    );
 }
 
 #[test]

@@ -499,13 +499,13 @@ pub(super) fn also_an_int(text: &[u8], r: f64) -> Option<i64> {
 }
 
 /// Fixed buffer for a rendered number, which never exceeds 25 bytes.
-pub(super) struct NumberText {
+pub(crate) struct NumberText {
     bytes: [u8; 32],
     len: usize,
 }
 
 impl NumberText {
-    const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             bytes: [0; 32],
             len: 0,
@@ -528,7 +528,7 @@ impl NumberText {
         }
     }
 
-    pub(super) fn as_str(&self) -> &str {
+    pub(crate) fn as_str(&self) -> &str {
         core::str::from_utf8(&self.bytes[..self.len]).unwrap_or_default()
     }
 }

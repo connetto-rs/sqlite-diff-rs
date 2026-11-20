@@ -12,7 +12,9 @@ use alloc::string::{String, ToString};
 use core::fmt::Write;
 
 use super::error::DecodeError;
+use super::float4out::float4out_digits;
 use super::wire_type::WireType;
+use crate::affinity::NumberText;
 use crate::encoding::Value;
 
 /// Map a decoded float to a value, NaN becoming `Value::Null` because SQLite never stores NaN.
@@ -57,7 +59,8 @@ pub(crate) fn decode_pg_int_binary<S, B>(
 }
 
 /// Decode a PostgreSQL binary float (`float4`/`float8`) from its 4 or 8
-/// byte big-endian IEEE 754 form, normalized via [`normalize_real`].
+/// byte big-endian IEEE 754 form, normalized via [`normalize_real`]. A
+/// `float4` becomes the double [`widen_f32`] gives, the one its text parses to.
 ///
 /// # Errors
 ///
@@ -69,7 +72,7 @@ pub(crate) fn decode_pg_real_binary<S, B>(
     match bytes.len() {
         4 => {
             let arr: [u8; 4] = bytes.try_into().unwrap();
-            Ok(normalize_real(f64::from(f32::from_be_bytes(arr))))
+            Ok(normalize_real(widen_f32(f32::from_be_bytes(arr))))
         }
         8 => {
             let arr: [u8; 8] = bytes.try_into().unwrap();
@@ -80,6 +83,23 @@ pub(crate) fn decode_pg_real_binary<S, B>(
             expected: "float4 or float8 binary (4 or 8 bytes)",
             actual: "unexpected binary float width",
         }),
+    }
+}
+
+/// The double nearest the decimal PostgreSQL's `float4out` prints for `f`,
+/// the value a `real`'s pgoutput text parses to, so `0.1` for `0.1::real`
+/// where widening the bits would give `0.10000000149011612`.
+fn widen_f32(f: f32) -> f64 {
+    let Some((mantissa, exponent)) = float4out_digits(f) else {
+        return f64::from(f);
+    };
+    let mut text = NumberText::new();
+    let _ = write!(text, "{mantissa}e{exponent}");
+    let magnitude = text.as_str().parse().unwrap_or(f64::from(f.abs()));
+    if f.is_sign_negative() {
+        -magnitude
+    } else {
+        magnitude
     }
 }
 

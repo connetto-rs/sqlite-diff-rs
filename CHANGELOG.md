@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+A PostgreSQL `real` decoded from its binary form, a `PgBinary` field or a pgoutput binary cell, lands on the double nearest the decimal `float4out` prints, the value its pgoutput and wal2json text decodes to, so `0.1::real` is stored as `0.1` on every path, every element of a binary `real[]` included.
+
 ## 0.20.0
 
 ### Breaking

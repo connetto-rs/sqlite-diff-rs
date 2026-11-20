@@ -162,7 +162,8 @@ where
 // Text mode: `str::parse::<f64>` accepts "NaN"/"Infinity"/"-Infinity"
 // and standard decimal / exponential forms. NaN becomes Null, matching
 // the crate's `decode_value`.
-// Binary mode: float4 = 4-byte big-endian IEEE 754, float8 = 8-byte.
+// Binary mode: float4 = 4-byte big-endian IEEE 754, landing on the double
+// its text gives, float8 = 8-byte.
 // ------------------------------------------------------------------
 
 impl<S, B> Decoder<PgWalstream, S, B> for RealDecoder {
