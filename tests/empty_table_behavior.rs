@@ -230,11 +230,11 @@ fn test_sqlite_cancelled_table_not_in_changeset_multi_table() {
     eprintln!("Changeset bytes: {changeset:02x?}");
 
     assert!(
-        !table_names.contains(&"users".to_string()),
+        !table_names.iter().any(|name| name == "users"),
         "Cancelled table 'users' should NOT appear in changeset. Tables found: {table_names:?}"
     );
     assert!(
-        table_names.contains(&"posts".to_string()),
+        table_names.iter().any(|name| name == "posts"),
         "Active table 'posts' should appear in changeset. Tables found: {table_names:?}"
     );
 }
@@ -254,11 +254,11 @@ fn test_sqlite_cancelled_table_not_in_patchset_multi_table() {
     eprintln!("Tables in patchset (multi-table, one cancelled): {table_names:?}");
 
     assert!(
-        !table_names.contains(&"users".to_string()),
+        !table_names.iter().any(|name| name == "users"),
         "Cancelled table 'users' should NOT appear in patchset. Tables found: {table_names:?}"
     );
     assert!(
-        table_names.contains(&"posts".to_string()),
+        table_names.iter().any(|name| name == "posts"),
         "Active table 'posts' should appear in patchset. Tables found: {table_names:?}"
     );
 }
@@ -312,8 +312,8 @@ fn test_sqlite_table_order_after_cancel_and_readd_changeset() {
     }
 
     // Verify both tables are present regardless of order
-    assert!(table_names.contains(&"table_a".to_string()));
-    assert!(table_names.contains(&"table_b".to_string()));
+    assert!(table_names.iter().any(|name| name == "table_a"));
+    assert!(table_names.iter().any(|name| name == "table_b"));
 }
 
 /// Same test for patchset format.
@@ -336,8 +336,8 @@ fn test_sqlite_table_order_after_cancel_and_readd_patchset() {
         2,
         "Expected 2 tables, got: {table_names:?}"
     );
-    assert!(table_names.contains(&"table_a".to_string()));
-    assert!(table_names.contains(&"table_b".to_string()));
+    assert!(table_names.iter().any(|name| name == "table_a"));
+    assert!(table_names.iter().any(|name| name == "table_b"));
 }
 
 // =============================================================================
@@ -546,7 +546,7 @@ fn test_sqlite_partial_cancel_preserves_table() {
     eprintln!("Partial cancel changeset bytes: {changeset:02x?}");
 
     assert!(
-        table_names.contains(&"users".to_string()),
+        table_names.iter().any(|name| name == "users"),
         "Table with surviving operations should appear in changeset"
     );
     assert_ne!(changeset, [] as [u8; 0]);
