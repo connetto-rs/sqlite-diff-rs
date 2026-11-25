@@ -102,6 +102,9 @@ enum RenderError {
     /// An UPDATE with no columns to write, so its `SET` clause is empty.
     #[error("UPDATE has an empty SET clause")]
     EmptyUpdateSet,
+    /// An INSERT whose every column the [`Adapter`] leaves out.
+    #[error("INSERT leaves out every column")]
+    EmptyInsert,
     /// UPDATE/DELETE against a table with no primary-key columns.
     #[error("UPDATE/DELETE targets a table with no primary key")]
     EmptyRowPredicate,
@@ -180,8 +183,8 @@ where
     }
 }
 
-/// One boxed, adapter-resolved column binder.
-type BoxedBinder<'a, DB> = Box<dyn Binder<DB> + Send + 'a>;
+/// One adapter-resolved column binder, with the index of its column.
+type ResolvedBinder<'a, DB> = (usize, Box<dyn Binder<DB> + Send + 'a>);
 
 /// One `(column index, value)` pair for a SET or WHERE clause.
 type Assignment<'a, S, B> = (usize, &'a Value<S, B>);
@@ -351,6 +354,8 @@ where
 trait ClauseSink<'b, S, B, DB: Backend> {
     /// Identifier for `col_idx`.
     fn column_name(&self, col_idx: usize) -> QueryResult<&str>;
+    /// Whether an `INSERT` names `col_idx`, carrying `value`.
+    fn keeps_insert_column(&self, col_idx: usize, value: &Value<S, B>) -> bool;
     /// Emit the value for `col_idx`. `value` is the plan's value; the
     /// adapter path may ignore it in favor of a pre-resolved binder.
     fn emit_value(
@@ -375,6 +380,10 @@ where
 {
     fn column_name(&self, col_idx: usize) -> QueryResult<&str> {
         column_name_at(self.table, col_idx)
+    }
+
+    fn keeps_insert_column(&self, _col_idx: usize, _value: &Value<S, B>) -> bool {
+        true
     }
 
     fn emit_value(
@@ -430,19 +439,29 @@ where
         RenderPlan::Insert { values } => {
             out.push_sql("INSERT INTO ");
             out.push_identifier(table_name)?;
-            out.push_sql(" (");
-            for (index, _value) in values.iter().enumerate() {
-                if index > 0 {
-                    out.push_sql(", ");
+            let mut named = 0_usize;
+            for (col_idx, value) in values.iter().enumerate() {
+                if !sink.keeps_insert_column(col_idx, value) {
+                    continue;
                 }
-                out.push_identifier(sink.column_name(index)?)?;
+                out.push_sql(if named == 0 { " (" } else { ", " });
+                out.push_identifier(sink.column_name(col_idx)?)?;
+                named += 1;
+            }
+            if named == 0 {
+                return Err(render_err(RenderError::EmptyInsert));
             }
             out.push_sql(") VALUES (");
-            for (index, value) in values.iter().enumerate() {
-                if index > 0 {
+            let mut emitted = 0_usize;
+            for (col_idx, value) in values.iter().enumerate() {
+                if !sink.keeps_insert_column(col_idx, value) {
+                    continue;
+                }
+                if emitted > 0 {
                     out.push_sql(", ");
                 }
-                sink.emit_value(index, value, out)?;
+                sink.emit_value(col_idx, value, out)?;
+                emitted += 1;
             }
             out.push_sql(")");
             Ok(())
@@ -601,6 +620,19 @@ pub trait Adapter<DB, S, B> {
         column_index: usize,
         value: &'a Value<S, B>,
     ) -> QueryResult<Box<dyn Binder<DB> + Send + 'a>>;
+
+    /// Whether an `INSERT` leaves column `column_index`, carrying `value`, out
+    /// of both its column list and `VALUES`, so the row takes the column's
+    /// default and the role needs no `INSERT` privilege on it. The default
+    /// keeps every column, and an `INSERT` left with none fails to render.
+    fn omits_from_insert(
+        &self,
+        _table_name: &str,
+        _column_index: usize,
+        _value: &Value<S, B>,
+    ) -> bool {
+        false
+    }
 }
 
 // ============================================================================
@@ -613,12 +645,12 @@ fn resolve_binders<'a, S, B, DB, A>(
     plan: RenderPlan<'a, S, B>,
     table_name: &str,
     adapter: &A,
-) -> Result<Vec<BoxedBinder<'a, DB>>, RenderError>
+) -> Result<Vec<ResolvedBinder<'a, DB>>, RenderError>
 where
     DB: Backend,
     A: Adapter<DB, S, B>,
 {
-    let mut binders: Vec<BoxedBinder<'a, DB>> = Vec::new();
+    let mut binders: Vec<ResolvedBinder<'a, DB>> = Vec::new();
     {
         let mut bind = |col_idx: usize, value: &'a Value<S, B>| -> Result<(), RenderError> {
             let binder = adapter.bind(table_name, col_idx, value).map_err(|err| {
@@ -628,13 +660,15 @@ where
                     message: err.to_string(),
                 }
             })?;
-            binders.push(binder);
+            binders.push((col_idx, binder));
             Ok(())
         };
         match plan {
             RenderPlan::Insert { values } => {
                 for (col_idx, value) in values.iter().enumerate() {
-                    bind(col_idx, value)?;
+                    if !adapter.omits_from_insert(table_name, col_idx, value) {
+                        bind(col_idx, value)?;
+                    }
                 }
             }
             RenderPlan::Update { set, predicate } => {
@@ -655,12 +689,14 @@ where
     Ok(binders)
 }
 
-/// Adapter sink: names from the adapter, values from pre-resolved binders.
+/// Adapter sink: names from the adapter, values and kept `INSERT` columns
+/// from the binders [`resolve_binders`] resolved.
 struct BoundSink<'r, 'a, S, B, DB, A>
 where
     DB: Backend,
 {
-    binders: core::slice::Iter<'r, BoxedBinder<'a, DB>>,
+    binders: &'r [ResolvedBinder<'a, DB>],
+    next: usize,
     adapter: &'a A,
     table_name: &'a str,
     _marker: core::marker::PhantomData<(S, B)>,
@@ -676,16 +712,28 @@ where
         Ok(self.adapter.column_name(self.table_name, col_idx))
     }
 
+    fn keeps_insert_column(&self, col_idx: usize, _value: &Value<S, B>) -> bool {
+        // An INSERT resolves its kept columns in column order.
+        self.binders
+            .binary_search_by_key(&col_idx, |&(resolved_idx, _)| resolved_idx)
+            .is_ok()
+    }
+
     fn emit_value(
         &mut self,
-        _col_idx: usize,
+        col_idx: usize,
         _value: &'b Value<S, B>,
         out: &mut AstPass<'_, 'b, DB>,
     ) -> QueryResult<()> {
-        let binder = self
-            .binders
-            .next()
-            .ok_or_else(|| DieselError::QueryBuilderError(Box::new(BinderResolutionError)))?;
+        let binder = match self.binders.get(self.next) {
+            Some((resolved_idx, binder)) if *resolved_idx == col_idx => binder,
+            _ => {
+                return Err(DieselError::QueryBuilderError(Box::new(
+                    BinderResolutionError,
+                )));
+            }
+        };
+        self.next += 1;
         binder.walk(out)
     }
 }
@@ -698,7 +746,7 @@ where
     DB: Backend,
 {
     op: V,
-    resolved: Result<Vec<BoxedBinder<'a, DB>>, RenderError>,
+    resolved: Result<Vec<ResolvedBinder<'a, DB>>, RenderError>,
     adapter: &'a A,
     _marker: core::marker::PhantomData<(S, B)>,
 }
@@ -745,7 +793,8 @@ where
         let plan = self.op.render_plan().map_err(render_err)?;
         let table_name = self.op.table().name();
         let mut sink = BoundSink {
-            binders: binders.iter(),
+            binders,
+            next: 0,
             adapter: self.adapter,
             table_name,
             _marker: core::marker::PhantomData,
@@ -764,11 +813,10 @@ where
 
 impl<V, S, B, DB, A, Conn> RunQueryDsl<Conn> for BoundOp<'_, V, S, B, DB, A> where DB: Backend {}
 
-/// Internal error: binder count out of sync between resolve and walk_ast.
-/// Only reachable if the two disagree about column bookkeeping, which is a
-/// bug in this crate.
+/// Internal error: the binders resolved up front disagree with the columns
+/// `walk_ast` emits. Only reachable through a bookkeeping bug in this crate.
 #[derive(Debug, thiserror::Error)]
-#[error("internal: binder count mismatch between BoundOp resolve and walk_ast")]
+#[error("internal: BoundOp resolve and walk_ast disagree about the bound columns")]
 struct BinderResolutionError;
 
 /// Executable Diesel query built from one [`PatchsetOp`] + [`Adapter`].

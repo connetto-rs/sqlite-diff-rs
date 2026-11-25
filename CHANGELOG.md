@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+`Adapter::omits_from_insert` lets an adapter leave a column out of a rendered `INSERT`, so the row takes the column's default and the statement needs no `INSERT` privilege on it. PostgreSQL checks that privilege on every column an `INSERT` names, whatever its value, so a role granted `INSERT` on some columns only needs the others left out. The answer comes per table, column and value, the default keeps every column, and an `INSERT` left with no column fails to render.
+
 ### Fixed
 
 A PostgreSQL `real` decoded from its binary form, a `PgBinary` field or a pgoutput binary cell, lands on the double nearest the decimal `float4out` prints, the value its pgoutput and wal2json text decodes to, so `0.1::real` is stored as `0.1` on every path, every element of a binary `real[]` included.
