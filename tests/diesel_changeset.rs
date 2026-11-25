@@ -357,6 +357,42 @@ where
     ) -> QueryResult<Box<dyn Binder<DB> + Send + 'a>> {
         Ok(Box::new(DefaultBinder::from(value)))
     }
+
+    fn omits_from_insert(&self, table: &str, column_index: usize, value: &Value<S, B>) -> bool {
+        matches!((table, column_index, value), ("kv", 2, Value::Null))
+    }
+}
+
+#[test]
+fn adapter_leaves_an_omitted_column_out_of_a_changeset_insert() {
+    let table = SimpleTable::new(
+        "kv",
+        &[
+            ("tenant_id", "INTEGER"),
+            ("user_id", "INTEGER"),
+            ("value", "TEXT"),
+        ],
+        &[0, 1],
+    );
+    let changeset = ChangeSet::<SimpleTable, String, Vec<u8>>::new().insert(
+        Insert::from(table)
+            .set(0, 1_i64)
+            .unwrap()
+            .set(1, 2_i64)
+            .unwrap()
+            .set_null(2)
+            .unwrap(),
+    );
+    let op = changeset
+        .iter()
+        .next()
+        .unwrap()
+        .with_adapter::<Pg, _>(&TestAdapter);
+
+    assert_eq!(
+        debug_query::<Pg, _>(&op).to_string(),
+        r#"INSERT INTO "kv" ("tenant_id", "user_id") VALUES ($1, $2) -- binds: [1, 2]"#
+    );
 }
 
 #[test]

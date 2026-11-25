@@ -317,3 +317,87 @@ struct One {
     #[diesel(sql_type = BigInt)]
     n: i64,
 }
+
+// Adapter that leaves a NULL column out of an INSERT ---------------------
+
+diesel::table! {
+    /// Organizations whose `founded_at` the caller may not insert.
+    organizations (id) {
+        /// Rowid primary key.
+        id -> BigInt,
+        /// Filled by the column default.
+        founded_at -> Text,
+        /// Creator of the organization.
+        created_by_id -> BigInt,
+    }
+}
+
+struct GrantsAdapter;
+
+impl<S: AsRef<str> + Sync, B: AsRef<[u8]> + Sync> Adapter<Sqlite, S, B> for GrantsAdapter {
+    fn column_name(&self, _table: &str, index: usize) -> &str {
+        ["id", "founded_at", "created_by_id"][index]
+    }
+
+    fn bind<'a>(
+        &self,
+        _table: &str,
+        _column_index: usize,
+        value: &'a Value<S, B>,
+    ) -> diesel::result::QueryResult<Box<dyn Binder<Sqlite> + Send + 'a>> {
+        Ok(Box::new(DefaultBinder::from(value)))
+    }
+
+    fn omits_from_insert(&self, _table: &str, column_index: usize, value: &Value<S, B>) -> bool {
+        column_index == 1 && matches!(value, Value::Null)
+    }
+}
+
+#[test]
+fn adapter_omitted_column_takes_its_default() {
+    let mut conn = conn();
+    conn.batch_execute(
+        "CREATE TABLE organizations (
+            id            INTEGER PRIMARY KEY,
+            founded_at    TEXT NOT NULL DEFAULT 'at founding',
+            created_by_id INTEGER NOT NULL
+        )",
+    )
+    .unwrap();
+    let schema = sqlite_diff_rs::SimpleTable::with_rowid_alias(
+        "organizations",
+        &[
+            ("id", "INTEGER"),
+            ("founded_at", "TEXT"),
+            ("created_by_id", "INTEGER"),
+        ],
+        0,
+    );
+    let patchset = sqlite_diff_rs::PatchSet::<_, String, Vec<u8>>::new().insert(
+        sqlite_diff_rs::Insert::from(schema)
+            .set(0, 1_i64)
+            .unwrap()
+            .set_null(1)
+            .unwrap()
+            .set(2, 7_i64)
+            .unwrap(),
+    );
+
+    patchset
+        .iter()
+        .next()
+        .unwrap()
+        .with_adapter::<Sqlite, _>(&GrantsAdapter)
+        .execute(&mut conn)
+        .expect("an INSERT leaving founded_at out satisfies its NOT NULL default");
+
+    let row: (i64, String, i64) = organizations::table
+        .select((
+            organizations::id,
+            organizations::founded_at,
+            organizations::created_by_id,
+        ))
+        .first(&mut conn)
+        .unwrap();
+    assert_eq!(row, (1, "at founding".to_owned(), 7));
+}

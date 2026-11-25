@@ -859,3 +859,140 @@ fn adapter_bind_ok_still_walks_normally() {
         "{sql}"
     );
 }
+
+// Adapter that leaves columns out of an INSERT ----------------------------
+
+/// Leaves out a `NULL` in `organizations.founded_at` and every column of `counters`.
+struct GrantsAdapter;
+
+impl<S, B> Adapter<Pg, S, B> for GrantsAdapter
+where
+    S: AsRef<str> + Sync,
+    B: AsRef<[u8]> + Sync,
+{
+    fn column_name(&self, table: &str, column_index: usize) -> &str {
+        match table {
+            "organizations" => ["id", "founded_at", "created_by_id"][column_index],
+            "counters" => ["id"][column_index],
+            other => panic!("adapter has no column layout for table {other:?}"),
+        }
+    }
+
+    fn bind<'a>(
+        &self,
+        _table: &str,
+        _column_index: usize,
+        value: &'a Value<S, B>,
+    ) -> diesel::result::QueryResult<Box<dyn Binder<Pg> + Send + 'a>> {
+        Ok(Box::new(DefaultBinder::from(value)))
+    }
+
+    fn omits_from_insert(&self, table: &str, column_index: usize, value: &Value<S, B>) -> bool {
+        matches!(
+            (table, column_index, value),
+            ("organizations", 1, Value::Null)
+        ) || table == "counters"
+    }
+}
+
+fn organizations() -> SimpleTable {
+    SimpleTable::with_rowid_alias(
+        "organizations",
+        &[
+            ("id", "INTEGER"),
+            ("founded_at", "TEXT"),
+            ("created_by_id", "INTEGER"),
+        ],
+        0,
+    )
+}
+
+fn render_with_grants(
+    patchset: &PatchSet<SimpleTable, alloc::string::String, alloc::vec::Vec<u8>>,
+) -> alloc::string::String {
+    use alloc::string::ToString;
+    let op = patchset
+        .iter()
+        .next()
+        .unwrap()
+        .with_adapter::<Pg, _>(&GrantsAdapter);
+    debug_query::<Pg, _>(&op).to_string()
+}
+
+#[test]
+fn adapter_leaves_an_omitted_column_out_of_columns_and_values() {
+    let insert = Insert::from(organizations())
+        .set(0, 1_i64)
+        .unwrap()
+        .set_null(1)
+        .unwrap()
+        .set(2, 7_i64)
+        .unwrap();
+    let patchset =
+        PatchSet::<SimpleTable, alloc::string::String, alloc::vec::Vec<u8>>::new().insert(insert);
+
+    let sql = render_with_grants(&patchset);
+    assert_eq!(
+        sql,
+        r#"INSERT INTO "organizations" ("id", "created_by_id") VALUES ($1, $2) -- binds: [1, 7]"#
+    );
+}
+
+#[test]
+fn adapter_keeps_a_column_it_omits_only_when_null() {
+    let insert = Insert::from(organizations())
+        .set(0, 1_i64)
+        .unwrap()
+        .set(1, "2024-01-01")
+        .unwrap()
+        .set(2, 7_i64)
+        .unwrap();
+    let patchset =
+        PatchSet::<SimpleTable, alloc::string::String, alloc::vec::Vec<u8>>::new().insert(insert);
+
+    let sql = render_with_grants(&patchset);
+    assert_eq!(
+        sql,
+        r#"INSERT INTO "organizations" ("id", "founded_at", "created_by_id") VALUES ($1, $2, $3) -- binds: [1, "2024-01-01", 7]"#
+    );
+}
+
+#[test]
+fn adapter_omission_leaves_update_untouched() {
+    let update =
+        PatchUpdate::<_, alloc::string::String, alloc::vec::Vec<u8>>::from(organizations())
+            .set(0, 1_i64)
+            .unwrap()
+            .set_null(1)
+            .unwrap();
+    let patchset =
+        PatchSet::<SimpleTable, alloc::string::String, alloc::vec::Vec<u8>>::new().update(update);
+
+    let sql = render_with_grants(&patchset);
+    assert_eq!(
+        sql,
+        r#"UPDATE "organizations" SET "founded_at" = NULL WHERE "id" = $1 -- binds: [1]"#
+    );
+}
+
+#[test]
+fn adapter_omitting_every_column_fails_to_render() {
+    let table = SimpleTable::with_rowid_alias("counters", &[("id", "INTEGER")], 0);
+    let insert = Insert::from(table).set(0, 1_i64).unwrap();
+    let patchset =
+        PatchSet::<SimpleTable, alloc::string::String, alloc::vec::Vec<u8>>::new().insert(insert);
+    let op = patchset
+        .iter()
+        .next()
+        .unwrap()
+        .with_adapter::<Pg, _>(&GrantsAdapter);
+
+    let mut query_builder = diesel::pg::PgQueryBuilder::default();
+    let err = diesel::query_builder::QueryFragment::<Pg>::to_sql(&op, &mut query_builder, &Pg)
+        .expect_err("an INSERT naming no column must not render");
+    assert!(
+        matches!(&err, diesel::result::Error::QueryBuilderError(inner)
+            if inner.to_string() == "INSERT leaves out every column"),
+        "{err:?}"
+    );
+}
